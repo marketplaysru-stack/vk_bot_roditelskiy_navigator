@@ -35,17 +35,16 @@ logger.addHandler(console_handler)
 def log(msg):
     logging.info(msg)
 
-# ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (для родительской группы) =====
-BOT_TOKEN = os.getenv("BOT_TOKEN")                  # Токен Telegram-бота (создайте нового)
-VK_TOKEN = os.getenv("VK_TOKEN_PARENT")             # Токен родительской группы
-VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")       # ID родительской группы (-197687739)
-AGNES_API_KEY = os.getenv("AGNES_API_KEY")          # Общий ключ Agnes AI
-GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")    # Опционально
-PORT = int(os.getenv("PORT", 8081))                 # Порт для health-сервера (отличный от AI)
+# ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (используем новую переменную) =====
+BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")              # <-- ИЗМЕНЕНО
+VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
+VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
+AGNES_API_KEY = os.getenv("AGNES_API_KEY")
+GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
+PORT = int(os.getenv("PORT", 8081))
 
-# Проверка обязательных переменных
 if not BOT_TOKEN:
-    log("❌ BOT_TOKEN не задан")
+    log("❌ BOT_TOKEN_NEW не задан")
     sys.exit(1)
 if not VK_TOKEN:
     log("❌ VK_TOKEN_PARENT не задан")
@@ -64,7 +63,6 @@ if not AGNES_API_KEY:
 log("🚀 Запуск бота для Родительского навигатора (гиперреалистичные картинки)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
-# ===== ПУТЬ К ФАЙЛУ РАСПИСАНИЯ (ОБЩИЙ ДЛЯ ВСЕХ БОТОВ) =====
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
 log(f"📂 Файл расписания: {SCHEDULE_FILE}")
 
@@ -85,7 +83,7 @@ health_thread = threading.Thread(target=run_health_server, daemon=True)
 health_thread.start()
 log(f"🟢 Health-сервер запущен (порт {PORT})")
 
-# ===== ПРОВЕРКА ПОДКЛЮЧЕНИЯ К TELEGRAM =====
+# ===== ПРОВЕРКА TELEGRAM =====
 try:
     r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10)
     if r.status_code == 200:
@@ -152,7 +150,7 @@ def save_schedule(schedule):
     except Exception as e:
         log(f"⚠️ Ошибка сохранения: {e}")
 
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (без изменений) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА =====
 def generate_post_text(topic):
     log(f"🔤 Генерация текста для темы: {topic}")
     system_prompt = (
@@ -191,17 +189,8 @@ def generate_post_text(topic):
         log(f"   ❌ Генерация текста провалилась: {e}")
         return None
 
-# ============================================================
-# ===== УЛУЧШЕННЫЙ ПРОМПТ ДЛЯ КАРТИНОК (без текста, с иконками) =====
-# ============================================================
-
+# ===== УЛУЧШЕННЫЙ ПРОМПТ ДЛЯ КАРТИНОК =====
 def build_image_prompt(topic):
-    """
-    Формирует высокодетализированный промпт:
-    - запрещает любой текст/надписи
-    - разрешает рекламные иконки, логотипы, геометрические элементы
-    - фотореализм, кинематографическое освещение, 8K
-    """
     base = (
         f"Hyperrealistic cinematic photograph, square 1:1 format, {topic}. "
         "No text, no typography, no words, no letters, no numbers on the image. "
@@ -307,7 +296,6 @@ def generate_image(topic):
     log(f"🖼️ Генерация картинки для темы: {topic}")
     prompt = build_image_prompt(topic)
     log(f"   Промпт: {prompt[:200]}...")
-
     url = generate_image_agnes(prompt)
     if url:
         return url
@@ -320,7 +308,6 @@ def generate_image(topic):
     log("❌ Все источники картинок недоступны")
     return None
 
-# ===== СКАЧИВАНИЕ КАРТИНКИ =====
 def download_image(url):
     log(f"📥 Скачивание картинки: {url[:60]}...")
     def _do():
@@ -341,7 +328,7 @@ def download_image(url):
         log(f"   ❌ Скачивание провалилось: {e}")
         return None
 
-# ===== ПУБЛИКАЦИЯ В VK =====
+# ===== ПУБЛИКАЦИЯ В VK (с fallback) =====
 def vk_api_request(method, params, token, retries=3):
     base_url = "https://api.vk.com/method/"
     params = params.copy()
@@ -466,9 +453,8 @@ def post_to_vk(image_bytes, text):
             pass
         return False, f"Исключение: {str(e)}"
 
-# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА (только для родительской ниши) =====
+# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА (фильтр по нише) =====
 def execute_scheduled_post(item):
-    # Проверяем, что это наш пост (по нише)
     if item.get("niche") != "родительский":
         log(f"⏭️ Пропускаем задание для другой ниши: {item.get('niche')}")
         return
@@ -484,7 +470,7 @@ def execute_scheduled_post(item):
         return
     log(f"✅ Текст получен, длина {len(post_text)}")
 
-    log("🖼️ Шаг 2: Генерация картинки (без текста, с иконками)...")
+    log("🖼️ Шаг 2: Генерация картинки...")
     image_url = generate_image(topic)
     image_bytes = None
     if image_url:
@@ -505,7 +491,7 @@ def execute_scheduled_post(item):
     else:
         log(f"❌ Ошибка публикации: {error}")
 
-# ===== ПЛАНИРОВЩИК (фильтр по нише) =====
+# ===== ПЛАНИРОВЩИК =====
 def scheduler_loop():
     log("🔄 Планировщик запущен (проверка каждые 30 секунд)")
     while True:
@@ -517,7 +503,6 @@ def scheduler_loop():
                 log("📭 Расписание пустое")
             else:
                 for item in schedule:
-                    # Обрабатываем только посты с niche = "родительский"
                     if item.get("niche") == "родительский" and item["time"] == now and not item.get("done", False):
                         log(f"📢 Найдено задание: {item['topic']} в {item['time']}")
                         execute_scheduled_post(item)
@@ -528,7 +513,7 @@ def scheduler_loop():
             traceback.print_exc(file=sys.stdout)
         time.sleep(30)
 
-# ===== ОБРАБОТЧИКИ КОМАНД TELEGRAM (для родительского бота) =====
+# ===== ОБРАБОТЧИКИ КОМАНД =====
 def process_message(message):
     chat_id = message["chat"]["id"]
     text = message.get("text", "").strip()
@@ -584,7 +569,6 @@ def process_message(message):
         full_time = publish_time.strftime("%Y-%m-%d %H:%M")
         schedule = load_schedule()
         new_id = str(int(time.time()))
-        # Добавляем niche = "родительский"
         schedule.append({"id": new_id, "niche": "родительский", "topic": topic, "time": full_time, "done": False})
         save_schedule(schedule)
         send_message(chat_id, f"✅ Пост добавлен в Родительский: '{topic}' в {full_time}")
@@ -640,10 +624,9 @@ def get_updates(offset):
         log(f"⚠️ getUpdates исключение: {e}")
     return []
 
-# ===== ДОБАВЛЕНИЕ ТЕСТОВОГО ПОСТА ПРИ ПЕРВОМ ЗАПУСКЕ =====
+# ===== ТЕСТОВЫЙ ПОСТ ПРИ ЗАПУСКЕ =====
 def add_test_post_if_empty():
     schedule = load_schedule()
-    # Проверяем, есть ли уже посты для родительского
     has_parent = any(item.get("niche") == "родительский" for item in schedule)
     if not has_parent:
         log("🧪 Добавляем тестовый пост для Родительского через 2 минуты")
@@ -660,7 +643,7 @@ def add_test_post_if_empty():
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Бот для Родительского навигатора (гиперреалистичные картинки) запущен")
+    log("🤖 Бот для Родительского навигатора запущен")
     add_test_post_if_empty()
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
