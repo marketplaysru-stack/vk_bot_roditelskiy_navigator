@@ -36,14 +36,14 @@ def log(msg):
     logging.info(msg)
 
 # ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
-# Используем новую переменную BOT_TOKEN_NEW
-BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
-VK_TOKEN = os.getenv("VK_TOKEN_PARENT")            # Токен родительской группы (обновите в настройках)
-VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")      # -197687739
+BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")               # Новый токен Telegram-бота (@DmitrySergeevich_bot)
+VK_TOKEN = os.getenv("VK_TOKEN_PARENT")              # Токен родительской группы (ОБЯЗАТЕЛЬНО с правами photos, wall, groups, offline)
+VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")        # -197687739
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
-GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")   # опционально
-PORT = int(os.getenv("PORT", 8081))                # измените, если занят
+GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")     # Опционально
+PORT = int(os.getenv("PORT", 8081))                  # Рекомендуем 8081
 
+# Проверка обязательных переменных
 if not BOT_TOKEN:
     log("❌ BOT_TOKEN_NEW не задан")
     sys.exit(1)
@@ -298,23 +298,6 @@ def generate_image_pollinations(prompt):
         log(f"   ❌ Pollinations исключение: {e}")
         return None
 
-def generate_image(topic):
-    log(f"🖼️ Генерация картинки для темы: {topic}")
-    prompt = build_image_prompt(topic)
-    log(f"   Промпт: {prompt[:200]}...")
-
-    url = generate_image_agnes(prompt)
-    if url:
-        return url
-    url = generate_image_gigachat(prompt)
-    if url:
-        return url
-    url = generate_image_pollinations(prompt)
-    if url:
-        return url
-    log("❌ Все источники картинок недоступны")
-    return None
-
 def download_image(url):
     log(f"📥 Скачивание картинки: {url[:60]}...")
     def _do():
@@ -335,7 +318,7 @@ def download_image(url):
         log(f"   ❌ Скачивание провалилось: {e}")
         return None
 
-# ===== ПУБЛИКАЦИЯ В VK =====
+# ===== ПУБЛИКАЦИЯ В VK (возвращает success, error, и флаг "photo_upload_success") =====
 def vk_api_request(method, params, token, retries=3):
     base_url = "https://api.vk.com/method/"
     params = params.copy()
@@ -357,6 +340,10 @@ def vk_api_request(method, params, token, retries=3):
         return None
 
 def post_to_vk(image_bytes, text):
+    """
+    Возвращает (success, error, photo_uploaded)
+    где photo_uploaded = True если удалось загрузить фото (даже если пост не опубликован из-за другой ошибки)
+    """
     log(f"📤 Начало публикации в родительскую группу (ID {VK_GROUP_ID})")
     group_id = VK_GROUP_ID
     token = VK_TOKEN
@@ -365,9 +352,9 @@ def post_to_vk(image_bytes, text):
         log("   Публикация без фото (только текст)")
         result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
         if result is None:
-            return False, "Ошибка публикации текста"
+            return False, "Ошибка публикации текста", False
         log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {result['post_id']}")
-        return True, None
+        return True, None, False
 
     log("   Публикация с фото")
     try:
@@ -377,9 +364,9 @@ def post_to_vk(image_bytes, text):
             log("   ❌ Не удалось получить upload_url, публикуем без фото")
             result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
             if result is None:
-                return False, "Ошибка публикации после падения upload_url"
+                return False, "Ошибка публикации после падения upload_url", False
             log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {result['post_id']}")
-            return True, None
+            return True, None, False
         upload_url = upload_resp["upload_url"]
         log(f"   upload_url получен: {upload_url[:50]}...")
 
@@ -405,9 +392,9 @@ def post_to_vk(image_bytes, text):
             log(f"   ❌ Ошибка загрузки фото: {e}, публикуем без фото")
             result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
             if result is None:
-                return False, "Ошибка публикации после падения загрузки фото"
+                return False, "Ошибка публикации после падения загрузки фото", False
             log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {result['post_id']}")
-            return True, None
+            return True, None, False
 
         log("   Шаг 3: Сохранение фото на стене...")
         save_params = {
@@ -421,9 +408,9 @@ def post_to_vk(image_bytes, text):
             log("   ❌ Ошибка сохранения фото, публикуем без фото")
             result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
             if result is None:
-                return False, "Ошибка публикации после падения сохранения фото"
+                return False, "Ошибка публикации после падения сохранения фото", False
             log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {result['post_id']}")
-            return True, None
+            return True, None, False
 
         photo = save_resp[0]
         attachment = f"photo{photo['owner_id']}_{photo['id']}"
@@ -441,12 +428,12 @@ def post_to_vk(image_bytes, text):
             log("   ❌ Ошибка публикации с фото, пробуем без фото")
             result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
             if result is None:
-                return False, "Ошибка публикации после падения с фото"
+                return False, "Ошибка публикации после падения с фото", True  # фото было загружено, но пост не опубликован
             log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {result['post_id']}")
-            return True, None
+            return True, None, True
 
         log(f"✅ Пост опубликован с фото в группе {group_id}, ID: {post_resp['post_id']}")
-        return True, None
+        return True, None, True
 
     except Exception as e:
         log(f"   Исключение в post_to_vk: {e}")
@@ -455,12 +442,12 @@ def post_to_vk(image_bytes, text):
             result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
             if result is not None:
                 log(f"✅ Пост опубликован (без фото) после исключения, ID: {result['post_id']}")
-                return True, None
+                return True, None, False
         except:
             pass
-        return False, f"Исключение: {str(e)}"
+        return False, f"Исключение: {str(e)}", False
 
-# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА =====
+# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА (с переключением между источниками) =====
 def execute_scheduled_post(item):
     if item.get("niche") != "родительский":
         log(f"⏭️ Пропускаем задание для другой ниши: {item.get('niche')}")
@@ -477,26 +464,61 @@ def execute_scheduled_post(item):
         return
     log(f"✅ Текст получен, длина {len(post_text)}")
 
-    log("🖼️ Шаг 2: Генерация картинки...")
-    image_url = generate_image(topic)
-    image_bytes = None
-    if image_url:
-        log(f"✅ URL картинки: {image_url[:60]}...")
+    # Список источников для генерации картинок
+    sources = [
+        ("Agnes", generate_image_agnes),
+        ("GigaChat", generate_image_gigachat),
+        ("Pollinations", generate_image_pollinations)
+    ]
+
+    photo_uploaded = False
+    success = False
+    error = None
+
+    for source_name, gen_func in sources:
+        if not gen_func:
+            continue
+        log(f"🖼️ Шаг 2: Попытка генерации картинки через {source_name}...")
+        # Генерируем промпт
+        prompt = build_image_prompt(topic)
+        log(f"   Промпт: {prompt[:200]}...")
+        image_url = gen_func(prompt)
+        if not image_url:
+            log(f"   ⚠️ {source_name} не дал URL, переключаемся на следующий источник")
+            continue
+
+        log(f"✅ URL картинки от {source_name}: {image_url[:60]}...")
         log("📥 Шаг 3: Скачивание картинки...")
         image_bytes = download_image(image_url)
-        if image_bytes:
-            log(f"✅ Картинка скачана, размер {len(image_bytes)} байт")
-        else:
-            log("⚠️ Картинка не скачалась, публикуем без фото")
-    else:
-        log("⚠️ Картинка не сгенерирована, публикуем без фото")
+        if not image_bytes:
+            log(f"   ❌ Не удалось скачать картинку от {source_name}, переключаемся на следующий источник")
+            continue
 
-    log("📤 Шаг 4: Публикация в VK...")
-    success, error = post_to_vk(image_bytes, post_text)
-    if success:
-        log("✅ Пост успешно опубликован!")
+        log(f"✅ Картинка скачана, размер {len(image_bytes)} байт")
+        log("📤 Шаг 4: Публикация в VK...")
+        success, error, photo_uploaded = post_to_vk(image_bytes, post_text)
+
+        if success:
+            if photo_uploaded:
+                log(f"✅ Пост успешно опубликован с фото от {source_name}!")
+            else:
+                log(f"✅ Пост опубликован без фото (после проблем с загрузкой) от {source_name}")
+            break
+        else:
+            log(f"   ❌ Публикация с фото от {source_name} не удалась: {error}")
+            log(f"   🔄 Переключаемся на следующий источник...")
+
+    # Если ни один источник не сработал – публикуем без фото
+    if not success:
+        log("⚠️ Все источники не дали результат, публикуем без фото")
+        success, error, _ = post_to_vk(None, post_text)
+        if success:
+            log("✅ Пост опубликован без фото (резервный вариант)")
+        else:
+            log(f"❌ Ошибка публикации без фото: {error}")
     else:
-        log(f"❌ Ошибка публикации: {error}")
+        # Помечаем задание как выполненное
+        pass
 
 # ===== ПЛАНИРОВЩИК =====
 def scheduler_loop():
@@ -530,6 +552,7 @@ def process_message(message):
         send_message(chat_id,
             "👋 Бот для автопостинга в Родительский навигатор.\n"
             "🎨 Картинки: без текста, с рекламными иконками.\n"
+            "🔄 При ошибках публикации переключается между Agnes, GigaChat, Pollinations.\n"
             "/post_in тема минуты — добавить пост через N минут\n"
             "/run_now тема — опубликовать прямо сейчас\n"
             "/list — показать все задания\n"
@@ -549,15 +572,52 @@ def process_message(message):
             if not post_text:
                 send_message(chat_id, "❌ Не удалось сгенерировать текст")
                 return
-            image_url = generate_image(topic)
-            image_bytes = None
-            if image_url:
+
+            # Список источников
+            sources = [
+                ("Agnes", generate_image_agnes),
+                ("GigaChat", generate_image_gigachat),
+                ("Pollinations", generate_image_pollinations)
+            ]
+
+            photo_uploaded = False
+            success = False
+            error = None
+
+            for source_name, gen_func in sources:
+                if not gen_func:
+                    continue
+                log(f"🖼️ Попытка генерации через {source_name}...")
+                prompt = build_image_prompt(topic)
+                image_url = gen_func(prompt)
+                if not image_url:
+                    log(f"   ⚠️ {source_name} не дал URL, переключаемся")
+                    continue
+                log(f"✅ URL от {source_name}: {image_url[:60]}...")
                 image_bytes = download_image(image_url)
-            success, error = post_to_vk(image_bytes, post_text)
-            if success:
-                send_message(chat_id, f"✅ Пост опубликован в Родительский!")
-            else:
-                send_message(chat_id, f"❌ Ошибка публикации: {error}")
+                if not image_bytes:
+                    log(f"   ❌ Не удалось скачать от {source_name}, переключаемся")
+                    continue
+                log(f"✅ Картинка скачана, размер {len(image_bytes)} байт")
+                success, error, photo_uploaded = post_to_vk(image_bytes, post_text)
+                if success:
+                    if photo_uploaded:
+                        send_message(chat_id, f"✅ Пост опубликован с фото от {source_name}!")
+                    else:
+                        send_message(chat_id, f"✅ Пост опубликован без фото (после проблем с загрузкой) от {source_name}")
+                    break
+                else:
+                    log(f"   ❌ Публикация с фото от {source_name} не удалась: {error}")
+                    log(f"   🔄 Переключаемся на следующий источник...")
+
+            if not success:
+                log("⚠️ Все источники не дали результат, публикуем без фото")
+                success, error, _ = post_to_vk(None, post_text)
+                if success:
+                    send_message(chat_id, "✅ Пост опубликован без фото (резерв)")
+                else:
+                    send_message(chat_id, f"❌ Ошибка публикации: {error}")
+
         threading.Thread(target=publish).start()
         return
 
@@ -650,7 +710,7 @@ def add_test_post_if_empty():
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Бот для Родительского навигатора запущен")
+    log("🤖 Бот для Родительского навигатора (с переключением) запущен")
     add_test_post_if_empty()
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
