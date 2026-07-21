@@ -35,13 +35,14 @@ logger.addHandler(console_handler)
 def log(msg):
     logging.info(msg)
 
-# ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (используем новую переменную) =====
-BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")              # <-- ИЗМЕНЕНО
-VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
-VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
+# ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
+# Используем новую переменную BOT_TOKEN_NEW
+BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
+VK_TOKEN = os.getenv("VK_TOKEN_PARENT")            # Токен родительской группы (обновите в настройках)
+VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")      # -197687739
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
-GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
-PORT = int(os.getenv("PORT", 8081))
+GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")   # опционально
+PORT = int(os.getenv("PORT", 8081))                # измените, если занят
 
 if not BOT_TOKEN:
     log("❌ BOT_TOKEN_NEW не задан")
@@ -189,7 +190,10 @@ def generate_post_text(topic):
         log(f"   ❌ Генерация текста провалилась: {e}")
         return None
 
+# ============================================================
 # ===== УЛУЧШЕННЫЙ ПРОМПТ ДЛЯ КАРТИНОК =====
+# ============================================================
+
 def build_image_prompt(topic):
     base = (
         f"Hyperrealistic cinematic photograph, square 1:1 format, {topic}. "
@@ -284,7 +288,9 @@ def generate_image_gigachat(prompt):
 def generate_image_pollinations(prompt):
     log("   🖼️ Попытка Pollinations (улучшенный промпт)...")
     try:
-        prompt_encoded = urllib.parse.quote(prompt)
+        # Сокращаем промпт для Pollinations, чтобы избежать ошибок
+        short_prompt = prompt[:250] + " photorealistic, high quality, 1:1"
+        prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
         log("   ✅ URL сформирован")
         return url
@@ -296,6 +302,7 @@ def generate_image(topic):
     log(f"🖼️ Генерация картинки для темы: {topic}")
     prompt = build_image_prompt(topic)
     log(f"   Промпт: {prompt[:200]}...")
+
     url = generate_image_agnes(prompt)
     if url:
         return url
@@ -328,7 +335,7 @@ def download_image(url):
         log(f"   ❌ Скачивание провалилось: {e}")
         return None
 
-# ===== ПУБЛИКАЦИЯ В VK (с fallback) =====
+# ===== ПУБЛИКАЦИЯ В VK =====
 def vk_api_request(method, params, token, retries=3):
     base_url = "https://api.vk.com/method/"
     params = params.copy()
@@ -453,7 +460,7 @@ def post_to_vk(image_bytes, text):
             pass
         return False, f"Исключение: {str(e)}"
 
-# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА (фильтр по нише) =====
+# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА =====
 def execute_scheduled_post(item):
     if item.get("niche") != "родительский":
         log(f"⏭️ Пропускаем задание для другой ниши: {item.get('niche')}")
