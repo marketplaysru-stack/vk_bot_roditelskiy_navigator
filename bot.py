@@ -61,7 +61,7 @@ except ValueError:
 if not AGNES_API_KEY:
     log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск родительского бота (с защитой от зависаний)")
+log("🚀 Запуск родительского бота (гиперреалистичные лица, европейская внешность)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -183,13 +183,12 @@ def generate_post_text_safe(topic):
         "temperature": 0.85
     }
 
-    # Функция, которая выполняет запрос
     def _request():
         response = requests.post(
             "https://apihub.agnes-ai.com/v1/chat/completions",
             headers=headers,
             json=data,
-            timeout=30  # 30 секунд
+            timeout=30
         )
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
@@ -200,11 +199,10 @@ def generate_post_text_safe(topic):
                 return content
         raise Exception("Пустой ответ")
 
-    # Пытаемся выполнить запрос с ограничением по времени через ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(_request)
         try:
-            text = future.result(timeout=35)  # 35 секунд на весь процесс
+            text = future.result(timeout=35)
             log(f"   Текст получен, длина {len(text)}")
             return text
         except TimeoutError:
@@ -278,25 +276,25 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (реалистичные люди, Москва) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (гиперреалистичные лица, европейская внешность) =====
 # ============================================================
 
 def build_image_prompt(topic):
     base = (
         f"Семья, родители и дети, счастливые моменты, уют, тепло, связанные с темой: {topic}. "
-        "Люди — типичные москвичи, европеоидная внешность: светлая кожа, русые или светлые волосы, "
-        "европейские черты лица, реалистичные, без искажений, с высокой детализацией кожи и глаз. "
-        "Одежда современная, городская, соответствует московскому стилю. "
-        "Действие происходит в Москве: уютные дворы, парки, улицы с характерной архитектурой. "
-        "Фотореализм, 8K, сверхдетализированное изображение, естественные пропорции, "
-        "мягкое естественное освещение, тёплые тона. Без текста и надписей."
+        "Люди должны выглядеть как типичные москвичи: европеоидная внешность, светлая кожа, русые или светлые волосы, европейские черты лица. "
+        "Лица должны быть гиперреалистичными, с естественной текстурой кожи, видимыми порами, ресницами, бровями, выразительными глазами, естественными пропорциями. "
+        "Без мультяшности, без гротеска, без искажений. "
+        "Одежда современная, городская. Действие в Москве: уютные дворы, парки, улицы. "
+        "Фотореализм, 8K, сверхдетализированное изображение, мягкое естественное освещение, тёплые тона. Без текста и надписей."
     )
     return base
 
 def generate_image_pollinations(prompt):
     log("   🖼️ Pollinations...")
     try:
-        short_prompt = prompt[:200] + " Moscow family, European features, photorealistic, 8k, highly detailed"
+        # Укорачиваем промпт, но добавляем ключевые слова для гиперреализма лиц
+        short_prompt = prompt[:200] + " hyperrealistic faces, European, Moscow, photorealistic, 8k, detailed skin, natural"
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
         log("   ✅ URL сформирован")
@@ -521,7 +519,7 @@ def execute_scheduled_post(item):
     post_text = generate_post_text_safe(topic)
     log(f"✅ Текст получен (или fallback), длина {len(post_text)}")
 
-    log("🖼️ Шаг 2: Генерация картинки...")
+    log("🖼️ Шаг 2: Генерация картинки с гиперреалистичными лицами...")
     image_url = generate_image(topic)
     image_bytes = None
     if image_url:
@@ -683,7 +681,7 @@ def get_updates(offset):
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот запущен")
+    log("🤖 Родительский бот (гиперреалистичные лица) запущен")
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
     while True:
