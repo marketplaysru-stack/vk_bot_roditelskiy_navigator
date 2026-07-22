@@ -60,7 +60,7 @@ except ValueError:
 if not AGNES_API_KEY:
     log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск родительского бота (быстрый, с таймаутами)")
+log("🚀 Запуск родительского бота (русские, Центральная Россия)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -159,7 +159,7 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (с жёстким таймаутом 30 сек) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (с таймаутом 30 сек) =====
 # ============================================================
 
 def generate_post_text(topic):
@@ -185,7 +185,7 @@ def generate_post_text(topic):
             "https://apihub.agnes-ai.com/v1/chat/completions",
             headers=headers,
             json=data,
-            timeout=30  # жесткий таймаут 30 секунд
+            timeout=30
         )
         if response.status_code != 200:
             log(f"   ❌ Ошибка HTTP {response.status_code}")
@@ -269,13 +269,15 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (приоритет Pollinations) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (русские, Центральная Россия) =====
 # ============================================================
 
 def build_image_prompt(topic):
-    # Упрощённый промпт для Pollinations (быстрый и стабильный)
     base = (
         f"Семья, родители и дети, счастливые моменты, уют, тепло, связанные с темой: {topic}. "
+        "Люди должны быть типичной русской внешности (европеоидная раса, светлые или русые волосы, светлая кожа), "
+        "одеты по погоде средней полосы России. Действие происходит в Центральной России: берёзовые рощи, "
+        "уютные деревянные или кирпичные дома, зелёные дворы, солнечный или пасмурный день. "
         "Реалистичное фото, естественные пропорции, без искажений. "
         "Тёплые тона, мягкое освещение. Без текста."
     )
@@ -284,7 +286,7 @@ def build_image_prompt(topic):
 def generate_image_pollinations(prompt):
     log("   🖼️ Pollinations...")
     try:
-        short_prompt = prompt[:200] + " photorealistic, family, happy"
+        short_prompt = prompt[:200] + " Russian family, Central Russia, photorealistic"
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
         log("   ✅ URL сформирован")
@@ -328,11 +330,9 @@ def generate_image(topic):
     log(f"🖼️ Генерация картинки для темы: {topic}")
     prompt = build_image_prompt(topic)
     log(f"   Промпт: {prompt[:150]}...")
-    # Сначала Pollinations
     url = generate_image_pollinations(prompt)
     if url:
         return url
-    # Затем Agnes
     url = generate_image_agnes(prompt)
     if url:
         return url
