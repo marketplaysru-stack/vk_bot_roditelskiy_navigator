@@ -12,6 +12,7 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import random
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -60,7 +61,7 @@ except ValueError:
 if not AGNES_API_KEY:
     log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск родительского бота (с увеличенным таймаутом и fallback)")
+log("🚀 Запуск родительского бота (с защитой от зависаний)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -159,10 +160,11 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (с увеличенным таймаутом и fallback) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (с таймаутом и гарантированным fallback) =====
 # ============================================================
 
-def generate_post_text(topic):
+def generate_post_text_safe(topic):
+    """Возвращает текст поста или fallback. Никогда не зависает."""
     log(f"🔤 Генерация текста для темы: {topic}")
     system_prompt = (
         "Ты — эксперт в области воспитания детей, семейной психологии, образования и здорового развития. "
@@ -180,31 +182,37 @@ def generate_post_text(topic):
         ],
         "temperature": 0.85
     }
-    try:
+
+    # Функция, которая выполняет запрос
+    def _request():
         response = requests.post(
             "https://apihub.agnes-ai.com/v1/chat/completions",
             headers=headers,
             json=data,
-            timeout=60  # увеличен до 60 секунд
+            timeout=30  # 30 секунд
         )
         if response.status_code != 200:
-            log(f"   ❌ Ошибка HTTP {response.status_code}")
-            # fallback: простой текст
-            return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+            raise Exception(f"HTTP {response.status_code}")
         result = response.json()
         if "choices" in result and len(result["choices"]) > 0:
             content = result["choices"][0]["message"]["content"]
             if content:
-                log(f"   Текст получен, длина {len(content)}")
                 return content
-        log("   ❌ Пустой ответ от Agnes, используем fallback")
-        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
-    except requests.exceptions.Timeout:
-        log("   ❌ Таймаут при генерации текста (Agnes не ответил за 60 сек), используем fallback")
-        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
-    except Exception as e:
-        log(f"   ❌ Ошибка генерации текста: {e}, используем fallback")
-        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+        raise Exception("Пустой ответ")
+
+    # Пытаемся выполнить запрос с ограничением по времени через ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_request)
+        try:
+            text = future.result(timeout=35)  # 35 секунд на весь процесс
+            log(f"   Текст получен, длина {len(text)}")
+            return text
+        except TimeoutError:
+            log("   ❌ Таймаут генерации текста (более 35 сек), используем fallback")
+            return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+        except Exception as e:
+            log(f"   ❌ Ошибка генерации текста: {e}, используем fallback")
+            return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
 
 # ============================================================
 # ===== МОДУЛЬ СТАТИСТИКИ =====
@@ -270,7 +278,7 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (улучшенные реалистичные люди, европеоидная раса, Москва) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (реалистичные люди, Москва) =====
 # ============================================================
 
 def build_image_prompt(topic):
@@ -510,11 +518,8 @@ def execute_scheduled_post(item):
     log(f"📢 Публикую пост: '{topic}' (родительский)")
 
     log("🔤 Шаг 1: Генерация текста...")
-    post_text = generate_post_text(topic)
-    if not post_text:
-        log("❌ Текст не сгенерирован, используем fallback")
-        post_text = f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
-    log(f"✅ Текст получен, длина {len(post_text)}")
+    post_text = generate_post_text_safe(topic)
+    log(f"✅ Текст получен (или fallback), длина {len(post_text)}")
 
     log("🖼️ Шаг 2: Генерация картинки...")
     image_url = generate_image(topic)
