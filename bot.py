@@ -15,7 +15,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # ===== ИМПОРТ НАСТРОЕК ИЗ ОТДЕЛЬНЫХ ФАЙЛОВ =====
 import image_prompts as img_cfg
 import text_prompts as txt_cfg
-import vk_feeds   # <-- НОВЫЙ ИМПОРТ
+import vk_feeds
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -321,7 +321,6 @@ def generate_image_pollinations(prompt):
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width={img_cfg.POLLINATIONS_IMAGE_PARAMS['width']}&height={img_cfg.POLLINATIONS_IMAGE_PARAMS['height']}&nologo=true"
         log(f"   Pollinations URL сформирован: {url[:80]}...")
-        # Проверяем доступность (HEAD)
         try:
             head_resp = requests.head(url, timeout=10)
             if head_resp.status_code == 200:
@@ -342,7 +341,6 @@ def generate_image(topic):
     prompt = build_image_prompt(topic)
     log(f"   Промпт: {prompt[:200]}...")
 
-    # Цепочка с увеличенными попытками
     for attempt in range(2):
         log(f"   Попытка {attempt+1}/2")
         url = generate_image_agnes(prompt)
@@ -588,16 +586,16 @@ def scheduler_loop():
             traceback.print_exc(file=sys.stdout)
         time.sleep(30)
 
-# ===== VK FEEDS ФОНОВЫЙ ПОТОК (добавлен) =====
+# ===== VK FEEDS ФОНОВЫЙ ПОТОК (с передачей schedule) =====
 def vk_feeds_scheduler_loop():
     """Фоновый поток для проверки групп ВК и добавления постов в расписание."""
     while True:
         try:
-            new_posts = vk_feeds.fetch_and_generate_topics_from_vk(limit=3)
+            schedule = load_schedule()
+            new_posts = vk_feeds.fetch_and_generate_topics_from_vk(schedule, limit=3)
             for post_data in new_posts:
                 niche = post_data['niche']
                 topic = post_data['topic']
-                # Публикуем через 5 минут после обнаружения
                 minutes = 5
                 publish_time = datetime.now() + timedelta(minutes=minutes)
                 full_time = publish_time.strftime("%Y-%m-%d %H:%M")
@@ -608,14 +606,14 @@ def vk_feeds_scheduler_loop():
                     "niche": niche,
                     "topic": topic,
                     "time": full_time,
-                    "done": False
+                    "done": False,
+                    "source_type": "vk_feed"   # помечаем, что пост из VK Feeds
                 })
                 save_schedule(schedule)
                 log(f"📰 Добавлен пост из ВК в нишу '{niche}': {topic[:50]}...")
         except Exception as e:
             log(f"⚠️ Ошибка в VK Feeds планировщике: {e}")
-        # Пауза между проверками (2 часа)
-        time.sleep(2 * 60 * 60)
+        time.sleep(2 * 60 * 60)  # 2 часа
 
 # ===== ОБРАБОТЧИКИ КОМАНД =====
 def process_message(message):
@@ -749,7 +747,7 @@ if __name__ == "__main__":
     # Запускаем основной планировщик
     threading.Thread(target=scheduler_loop, daemon=True).start()
 
-    # Запускаем поток для VK Feeds (добавлен)
+    # Запускаем поток для VK Feeds
     threading.Thread(target=vk_feeds_scheduler_loop, daemon=True).start()
 
     update_id = 0
