@@ -12,6 +12,9 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+# ===== ИМПОРТ НАСТРОЕК КАРТИНОК ИЗ ОТДЕЛЬНОГО ФАЙЛА =====
+import image_prompts as img_cfg
+
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -230,21 +233,12 @@ def generate_post_text(topic):
         return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (Agnes → GigaChat → Pollinations → None) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (используем промпт из image_prompts.py) =====
 # ============================================================
 
 def build_image_prompt(topic):
-    base = (
-        f"Hyperrealistic cinematic photograph, square 1:1 format, family, parents and children, happy moments, warmth, related to topic: {topic}. "
-        "People must be typical Moscow residents: European appearance, fair skin, light brown or blonde hair, European facial features. "
-        "Faces must be hyperrealistic: natural skin texture, visible pores, eyelashes, eyebrows, expressive eyes, natural proportions. "
-        "No cartoonishness, no grotesque, no distortions. "
-        "Modern urban clothing. Action takes place in Moscow: cozy courtyards, parks, streets. "
-        "Photorealism, 8K, ultra-detailed, soft natural lighting, warm tones. "
-        "No text or inscriptions. "
-        "Extreme detail, shallow depth of field, Hasselblad H6D, 100mm lens, f/2.8."
-    )
-    return base
+    # Используем шаблон из отдельного файла
+    return img_cfg.IMAGE_PROMPT_TEMPLATE.format(topic=topic)
 
 def generate_image_agnes(prompt):
     log("   🖼️ Попытка Agnes...")
@@ -263,7 +257,7 @@ def generate_image_agnes(prompt):
             "https://apihub.agnes-ai.com/v1/images/generations",
             headers=headers,
             json=data,
-            timeout=120
+            timeout=img_cfg.TIMEOUT_AGNES
         )
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
@@ -295,12 +289,11 @@ def generate_image_gigachat(prompt):
         "n": 1
     }
     def _do():
-        # Игнорируем SSL ошибку
         response = requests.post(
             "https://gigachat.devices.sberbank.ru/api/v1/images/generations",
             headers=headers,
             json=data,
-            timeout=120,
+            timeout=img_cfg.TIMEOUT_GIGACHAT,
             verify=False
         )
         if response.status_code != 200:
@@ -320,8 +313,8 @@ def generate_image_gigachat(prompt):
 def generate_image_pollinations(prompt):
     log("   🖼️ Попытка Pollinations...")
     try:
-        # Укорачиваем для стабильности
-        short_prompt = prompt[:250] + " hyperrealistic faces, European, Moscow, photorealistic, 8k"
+        # Укорачиваем промпт для стабильности и добавляем суффикс из конфига
+        short_prompt = prompt[:250] + img_cfg.SUFFIX_POLLINATIONS
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
         log("   ✅ URL сформирован")
@@ -351,7 +344,7 @@ def generate_image(topic):
 def download_image(url):
     log(f"📥 Скачивание картинки: {url[:60]}...")
     def _do():
-        response = requests.get(url, timeout=60)
+        response = requests.get(url, timeout=img_cfg.DOWNLOAD_TIMEOUT)
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
         content = response.content
@@ -359,7 +352,7 @@ def download_image(url):
             raise Exception("Некорректный ответ")
         return content
     try:
-        content = retry_call(_do, max_retries=3, delay=2, backoff=2)
+        content = retry_call(_do, max_retries=img_cfg.DOWNLOAD_RETRIES, delay=img_cfg.DOWNLOAD_DELAY, backoff=img_cfg.DOWNLOAD_BACKOFF)
         log(f"   Успешно, размер {len(content)} байт")
         return content
     except Exception as e:
@@ -546,7 +539,7 @@ def execute_scheduled_post(item):
     if success:
         log("✅ Пост успешно опубликован!")
         if post_id:
-            # Можно добавить сбор статистики здесь
+            # можно добавить сбор статистики
             pass
     else:
         log(f"❌ Ошибка публикации: {error}")
