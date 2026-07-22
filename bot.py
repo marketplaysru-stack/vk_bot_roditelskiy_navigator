@@ -37,9 +37,9 @@ def log(msg):
     logging.info(msg)
 
 # ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
-BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")                # Токен Telegram-бота для родительского (@DmitrySergeevich_bot)
-VK_TOKEN = os.getenv("VK_TOKEN_PARENT")               # Токен родительской группы (пользовательский)
-VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")         # -197687739
+BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
+VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
+VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
 PORT = int(os.getenv("PORT", 8081))
 
@@ -60,7 +60,7 @@ except ValueError:
 if not AGNES_API_KEY:
     log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск бота для Родительского навигатора (исправленные реалистичные промпты)")
+log("🚀 Запуск бота для Родительского навигатора (исправленная версия)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -183,7 +183,7 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (С ЭМОДЗИ, ХЕШТЕГАМИ, СТРУКТУРА 70/20/10) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (рабочая, с проверкой) =====
 # ============================================================
 
 def generate_post_text(topic):
@@ -195,12 +195,11 @@ def generate_post_text(topic):
         "Ты не продаёшь услуги, а помогаешь родителям чувствовать себя увереннее и счастливее. "
         "Формат поста: дружелюбный, понимающий, без осуждения. "
         "Пост должен быть структурирован по модели 70/20/10:\n"
-        "   — 70%: полезный экспертный контент (советы, упражнения, рецепты, идеи для игр, подходы к воспитанию).\n"
-        "   — 20%: обсуждение, примеры из жизни, ссылки на исследования или личный опыт.\n"
-        "   — 10%: вовлекающий элемент — вопрос к аудитории, чек-лист, задание для родителей, призыв поделиться опытом.\n"
-        "Используй эмодзи для разделения смысловых блоков (например, 👶, 👨‍👩‍👧‍👦, 💡, ❤️, 🌱, 📚, 🎨, 🧸, 🏃‍♂️, 🥗, 😊, ✨, 🕊️, 💬).\n"
-        "Разделяй блоки с помощью символов-разделителей (например, '---' или '✦').\n"
-        "В конце поста обязательно добавь 5–7 хештегов на русском языке, соответствующих теме (например, #родительство #дети #воспитание #семья #советыродителям #материнство #отцовство).\n"
+        "   — 70%: полезный экспертный контент.\n"
+        "   — 20%: обсуждение, примеры из жизни.\n"
+        "   — 10%: вовлекающий элемент — вопрос к аудитории.\n"
+        "Используй эмодзи для разделения смысловых блоков (👶, 👨‍👩‍👧‍👦, 💡, ❤️, 🌱, 📚, 🎨, 🧸).\n"
+        "В конце поста обязательно добавь 5 хештегов на русском языке.\n"
         "Пост должен быть визуально привлекательным, легко читаемым, с короткими абзацами."
     )
     user_prompt = f"Тема: {topic}"
@@ -223,9 +222,14 @@ def generate_post_text(topic):
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
         result = response.json()
-        return result["choices"][0]["message"]["content"]
+        if "choices" not in result or len(result["choices"]) == 0:
+            raise Exception("Нет choices в ответе")
+        content = result["choices"][0]["message"]["content"]
+        if not content:
+            raise Exception("Пустой текст")
+        return content
     try:
-        text = retry_call(_do, max_retries=3, delay=2, backoff=2)
+        text = retry_call(_do, max_retries=2, delay=2, backoff=2)
         log(f"   Текст получен, длина {len(text)}")
         return text
     except Exception as e:
@@ -233,7 +237,7 @@ def generate_post_text(topic):
         return None
 
 # ============================================================
-# ===== МОДУЛЬ СТАТИСТИКИ И САМООБУЧЕНИЯ =====
+# ===== МОДУЛЬ СТАТИСТИКИ =====
 # ============================================================
 
 def load_stats():
@@ -270,12 +274,7 @@ def fetch_post_stats(post_id, owner_id):
                 comments = post.get("comments", {}).get("count", 0)
                 views = post.get("views", {}).get("count", 0)
                 return {"likes": likes, "reposts": reposts, "comments": comments, "views": views}
-            else:
-                log(f"⚠️ Не удалось получить статистику поста {post_id}: {data}")
-                return None
-        else:
-            log(f"⚠️ Ошибка VK при получении статистики: {response.status_code}")
-            return None
+        return None
     except Exception as e:
         log(f"⚠️ Исключение при получении статистики: {e}")
         return None
@@ -324,48 +323,45 @@ def enhance_topic_with_best_topics(niche, original_topic):
     return f"{original_topic} (учитывая успешные форматы: {', '.join(best)})"
 
 # ============================================================
-# ===== ОБНОВЛЁННАЯ ГЕНЕРАЦИЯ ПРОМПТА ДЛЯ КАРТИНОК (реалистичные люди и дети) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (реалистичные промпты) =====
 # ============================================================
 
 def build_image_prompt(topic, niche):
-    # Определяем тип контента по ключевым словам
+    # Определяем тип сцены
     keywords_lower = topic.lower()
     scene_type = "generic"
-    if any(word in keywords_lower for word in ["игра", "игрушка", "забава", "досуг", "творчество"]):
+    if any(word in keywords_lower for word in ["игра", "игрушка", "забава", "досуг"]):
         scene_type = "play"
-    elif any(word in keywords_lower for word in ["обучение", "чтение", "школа", "урок", "развитие", "образование"]):
+    elif any(word in keywords_lower for word in ["обучение", "чтение", "школа", "урок", "развитие"]):
         scene_type = "learning"
-    elif any(word in keywords_lower for word in ["здоровье", "спорт", "физическая", "питание", "режим", "сон"]):
+    elif any(word in keywords_lower for word in ["здоровье", "спорт", "питание", "режим", "сон"]):
         scene_type = "health"
-    elif any(word in keywords_lower for word in ["психология", "чувства", "эмоции", "конфликт", "общение", "разговор"]):
+    elif any(word in keywords_lower for word in ["психология", "чувства", "эмоции", "общение"]):
         scene_type = "psychology"
-    elif any(word in keywords_lower for word in ["воспитание", "дисциплина", "границы", "правила", "пример"]):
+    elif any(word in keywords_lower for word in ["воспитание", "дисциплина", "границы", "правила"]):
         scene_type = "upbringing"
-    elif any(word in keywords_lower for word in ["семья", "выходной", "праздник", "традиция", "совместный", "время"]):
+    elif any(word in keywords_lower for word in ["семья", "выходной", "праздник", "традиция"]):
         scene_type = "family"
-    elif any(word in keywords_lower for word in ["дом", "уют", "интерьер", "порядок", "быт"]):
+    elif any(word in keywords_lower for word in ["дом", "уют", "интерьер", "порядок"]):
         scene_type = "home"
     else:
         scene_type = "generic"
 
-    # Базовые описания сцен с акцентом на реализм людей и детей
     scene_descriptions = {
-        "play": "Дети играют в развивающие игры с яркими игрушками. Фотореалистичные дети с естественной кожей, волосами и пропорциями. Радость, смех, свобода. Мягкое освещение, тёплые тона. Лица чёткие, без искажений.",
-        "learning": "Ребёнок за чтением книги, школьные принадлежности, уютная комната. Реалистичный ребёнок, естественная поза, внимательный взгляд. Мягкий свет, вдохновляющая атмосфера.",
-        "health": "Здоровый образ жизни: дети на прогулке, спорт, фрукты и овощи. Реалистичные дети, активные, улыбающиеся. Яркие, но естественные цвета. Тела пропорциональны, лица естественные.",
-        "psychology": "Тёплая беседа родителей и ребёнка, доверие, объятия. Реалистичные лица, выражение понимания и спокойствия. Мягкие цвета, уютная обстановка. Без гротеска.",
-        "upbringing": "Родители и дети, совместные занятия, установка правил. Реалистичные люди, добрые лица, естественные жесты. Светлые тона, доверительная атмосфера.",
-        "family": "Счастливая семья: родители и дети вместе, прогулка, пикник. Реалистичные лица, естественные улыбки, нормальные пропорции. Золотистый свет, тепло.",
-        "home": "Уютный дом, порядок, семейные традиции. Реалистичные люди, естественные позы, тёплые тона. Без искажений.",
-        "generic": "Счастливая семья, родители и дети. Фотореалистичные люди с естественными чертами лица, нормальные пропорции тела, отсутствие гротеска. Тёплые, уютные цвета."
+        "play": "Дети играют в развивающие игры. Реалистичные дети с естественной кожей, волосами и пропорциями. Радость, смех, свобода. Мягкое освещение, тёплые тона.",
+        "learning": "Ребёнок за чтением книги, школьные принадлежности. Реалистичный ребёнок, естественная поза. Мягкий свет.",
+        "health": "Дети на прогулке, спорт, фрукты. Реалистичные дети, активные. Естественные цвета.",
+        "psychology": "Тёплая беседа родителей и ребёнка. Реалистичные лица, доверие, объятия. Мягкие цвета.",
+        "upbringing": "Родители и дети, совместные занятия. Реалистичные люди, добрые лица.",
+        "family": "Счастливая семья: родители и дети вместе. Реалистичные лица, естественные улыбки.",
+        "home": "Уютный дом, семейные традиции. Реалистичные люди, естественные позы.",
+        "generic": "Счастливая семья, родители и дети. Фотореалистичные люди, тёплые тона."
     }
 
-    # Списки для вариативности
-    angles = ["крупный план лица", "общий план", "средний план", "вид сверху", "вид снизу", "панорамный обзор", "динамичный ракурс"]
-    lightings = ["солнечный свет с золотым оттенком", "сумеречный свет с синими акцентами", "драматичное контровое освещение", "мягкий рассеянный свет", "профессиональное студийное освещение", "естественный дневной свет"]
-    moods = ["кинематографичный, эпичный", "спокойный, надёжный, основательный", "современный, футуристичный", "уютный, тёплый", "индустриальный, брутальный", "чистый, минималистичный"]
+    angles = ["крупный план", "средний план", "общий план", "панорамный обзор"]
+    lightings = ["солнечный свет", "мягкий рассеянный свет", "естественный дневной свет"]
+    moods = ["уютный, тёплый", "спокойный", "дружелюбный"]
 
-    # Выбираем случайные элементы для разнообразия
     angle = random.choice(angles)
     lighting = random.choice(lightings)
     mood = random.choice(moods)
@@ -373,21 +369,14 @@ def build_image_prompt(topic, niche):
     scene_desc = scene_descriptions.get(scene_type, scene_descriptions["generic"])
     enhanced_topic = enhance_topic_with_best_topics(niche, topic)
 
-    # Формируем промпт с чёткими указаниями на реализм
     prompt = (
-        f"Hyperrealistic cinematic photograph, square 1:1 format, {enhanced_topic}. "
+        f"Hyperrealistic photo, square 1:1, {enhanced_topic}. "
         f"{scene_desc} "
-        f"Акцент на фотореализм: лица людей должны быть реалистичными, с естественной текстурой кожи, нормальными пропорциями, без искажений. "
-        f"Дети должны выглядеть как обычные дети, без мультяшности, без звериных черт. "
-        f"Запрещены гротеск, карикатурность, сюрреализм, абстракция. "
+        f"Фотореализм, естественные пропорции, без искажений. "
         f"Ракурс: {angle}. Освещение: {lighting}. Настроение: {mood}. "
-        "8K, высокое качество, профессиональная композиция. Без текста и надписей."
+        "Без текста. 8K качество."
     )
     return prompt
-
-# ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНОК (приоритет Pollinations -> Agnes) =====
-# ============================================================
 
 def generate_image_agnes(prompt):
     log("   🖼️ Попытка Agnes...")
@@ -423,10 +412,9 @@ def generate_image_agnes(prompt):
         return None
 
 def generate_image_pollinations(prompt):
-    log("   🖼️ Попытка Pollinations (бесплатный)...")
+    log("   🖼️ Попытка Pollinations...")
     try:
-        # Ограничиваем длину промпта для Pollinations
-        short_prompt = prompt[:250] + " photorealistic, high quality, 1:1"
+        short_prompt = prompt[:200] + " photorealistic, high quality"
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
         log("   ✅ URL сформирован")
@@ -438,47 +426,53 @@ def generate_image_pollinations(prompt):
 def download_image(url):
     log(f"📥 Скачивание картинки: {url[:60]}...")
     def _do():
-        response = requests.get(url, timeout=120)
+        response = requests.get(url, timeout=60)
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
         content = response.content
-        if b"<html" in content[:100] or b"<!DOCTYPE" in content[:100]:
-            raise Exception("Получен HTML вместо изображения")
-        if len(content) < 100:
-            raise Exception("Слишком маленький ответ")
+        if b"<html" in content[:100] or len(content) < 100:
+            raise Exception("Некорректный ответ")
         return content
     try:
-        content = retry_call(_do, max_retries=3, delay=2, backoff=2)
+        content = retry_call(_do, max_retries=2, delay=2, backoff=2)
         log(f"   Успешно, размер {len(content)} байт")
         return content
     except Exception as e:
         log(f"   ❌ Скачивание провалилось: {e}")
         return None
 
-# ===== ПУБЛИКАЦИЯ В VK (с POST для длинных запросов) =====
+def generate_image(topic, niche):
+    log(f"🖼️ Генерация картинки для темы: {topic}")
+    prompt = build_image_prompt(topic, niche)
+    log(f"   Промпт: {prompt[:150]}...")
+    url = generate_image_agnes(prompt)
+    if url:
+        return url
+    url = generate_image_pollinations(prompt)
+    if url:
+        return url
+    log("❌ Все источники недоступны")
+    return None
+
+# ===== ПУБЛИКАЦИЯ В VK =====
 def vk_api_request(method, params, token, retries=3):
     base_url = "https://api.vk.com/method/"
     params = params.copy()
     params["access_token"] = token
     params["v"] = "5.131"
-
     post_methods = ["wall.post", "wall.getById", "photos.saveWallPhoto"]
     use_post = method in post_methods
-
     def _do():
         if use_post:
             response = requests.post(base_url + method, data=params, timeout=60)
         else:
             response = requests.get(base_url + method, params=params, timeout=60)
-
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
         json_resp = response.json()
         if "error" in json_resp:
-            log(f"   ❌ VK API ошибка в {method}: {json_resp['error']}")
             raise Exception(json_resp["error"]["error_msg"])
         return json_resp["response"]
-
     try:
         return retry_call(_do, max_retries=retries, delay=2, backoff=2)
     except Exception as e:
@@ -491,7 +485,7 @@ def post_to_vk(image_bytes, text):
     token = VK_TOKEN
 
     if image_bytes is None:
-        log("   Публикация без фото (только текст)")
+        log("   Публикация без фото")
         result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
         if result is None:
             return False, "Ошибка публикации текста", False, None
@@ -513,44 +507,31 @@ def post_to_vk(image_bytes, text):
         log("   Шаг 1: Получение upload_url...")
         upload_resp = vk_api_request("photos.getWallUploadServer", {"group_id": abs(group_id)}, token=token, retries=3)
         if upload_resp is None:
-            log("   ❌ Не удалось получить upload_url, публикуем без фото")
+            log("   ❌ upload_url не получен, публикуем без фото")
             result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
             if result is None:
-                return False, "Ошибка публикации после падения upload_url", False, None
+                return False, "Ошибка публикации", False, None
             post_id = result.get("post_id")
             log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {post_id}")
             return True, None, False, post_id
         upload_url = upload_resp["upload_url"]
-        log(f"   upload_url получен: {upload_url[:50]}...")
 
         log("   Шаг 2: Загрузка фото...")
         def _upload():
             files = {"photo": ("image.jpg", image_bytes, "image/jpeg")}
-            resp = requests.post(upload_url, files=files, timeout=120)
+            resp = requests.post(upload_url, files=files, timeout=60)
             if resp.status_code != 200:
                 raise Exception(f"HTTP {resp.status_code}")
             data = resp.json()
-            log(f"   Ответ сервера загрузки: {data}")
             if data.get("error"):
                 raise Exception(f"Ошибка загрузки: {data['error']}")
             if not all(k in data for k in ("server", "photo", "hash")):
                 raise Exception(f"Неполный ответ: {data}")
-            if data.get("photo") == "[]" or not data.get("photo"):
-                raise Exception("photo пустое или '[]'")
             return data
 
-        try:
-            up = retry_call(_upload, max_retries=3, delay=2, backoff=2)
-        except Exception as e:
-            log(f"   ❌ Ошибка загрузки фото: {e}, публикуем без фото")
-            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
-            if result is None:
-                return False, "Ошибка публикации после падения загрузки фото", False, None
-            post_id = result.get("post_id")
-            log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {post_id}")
-            return True, None, False, post_id
+        up = retry_call(_upload, max_retries=2, delay=2, backoff=2)
 
-        log("   Шаг 3: Сохранение фото на стене...")
+        log("   Шаг 3: Сохранение фото...")
         save_params = {
             "group_id": abs(group_id),
             "server": up["server"],
@@ -562,16 +543,15 @@ def post_to_vk(image_bytes, text):
             log("   ❌ Ошибка сохранения фото, публикуем без фото")
             result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
             if result is None:
-                return False, "Ошибка публикации после падения сохранения фото", False, None
+                return False, "Ошибка публикации", False, None
             post_id = result.get("post_id")
             log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {post_id}")
             return True, None, False, post_id
 
         photo = save_resp[0]
         attachment = f"photo{photo['owner_id']}_{photo['id']}"
-        log(f"   Фото сохранено, attachment: {attachment}")
 
-        log("   Шаг 4: Публикация поста с фото...")
+        log("   Шаг 4: Публикация поста...")
         post_params = {
             "owner_id": group_id,
             "message": text,
@@ -583,108 +563,68 @@ def post_to_vk(image_bytes, text):
             log("   ❌ Ошибка публикации с фото, пробуем без фото")
             result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
             if result is None:
-                return False, "Ошибка публикации после падения с фото", True, None
+                return False, "Ошибка публикации", False, None
             post_id = result.get("post_id")
             log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {post_id}")
-            return True, None, True, post_id
+            return True, None, False, post_id
 
         post_id = post_resp.get("post_id")
         log(f"✅ Пост опубликован с фото в группе {group_id}, ID: {post_id}")
         return True, None, True, post_id
 
     except Exception as e:
-        log(f"   Исключение в post_to_vk: {e}")
-        traceback.print_exc(file=sys.stdout)
-        try:
-            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
-            if result is not None:
-                post_id = result.get("post_id")
-                log(f"✅ Пост опубликован (без фото) после исключения, ID: {post_id}")
-                return True, None, False, post_id
-        except:
-            pass
+        log(f"   ❌ Исключение в post_to_vk: {e}")
+        result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
+        if result is not None:
+            post_id = result.get("post_id")
+            log(f"✅ Пост опубликован (без фото) после исключения, ID: {post_id}")
+            return True, None, False, post_id
         return False, f"Исключение: {str(e)}", False, None
 
-# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА =====
+# ===== ВЫПОЛНЕНИЕ ПОСТА =====
 def execute_scheduled_post(item):
     if item.get("niche") != "родительский":
-        log(f"⏭️ Пропускаем задание для другой ниши: {item.get('niche')}")
         return
 
     niche = "родительский"
     topic = item["topic"]
-    time_str = item["time"]
-    log(f"📢 Публикую запланированный пост: '{topic}' в {time_str} (родительский)")
+    log(f"📢 Публикую пост: '{topic}' (родительский)")
 
     log("🔤 Шаг 1: Генерация текста...")
     post_text = generate_post_text(topic)
     if not post_text:
-        log("❌ Текст не сгенерирован, пропускаем пост")
+        log("❌ Текст не сгенерирован")
         return
     log(f"✅ Текст получен, длина {len(post_text)}")
 
-    sources = [
-        ("Pollinations", generate_image_pollinations),
-        ("Agnes", generate_image_agnes)
-    ]
-
-    photo_uploaded = False
-    success = False
-    error = None
-    post_id = None
-
-    for source_name, gen_func in sources:
-        if not gen_func:
-            continue
-        log(f"🖼️ Шаг 2: Попытка генерации картинки через {source_name}...")
-        prompt = build_image_prompt(topic, niche)
-        log(f"   Промпт: {prompt[:200]}...")
-        image_url = gen_func(prompt)
-        if not image_url:
-            log(f"   ⚠️ {source_name} не дал URL, переключаемся на следующий источник")
-            continue
-
-        log(f"✅ URL картинки от {source_name}: {image_url[:60]}...")
-        log("📥 Шаг 3: Скачивание картинки...")
+    log("🖼️ Шаг 2: Генерация картинки...")
+    image_url = generate_image(topic, niche)
+    image_bytes = None
+    if image_url:
+        log(f"✅ URL: {image_url[:60]}...")
         image_bytes = download_image(image_url)
-        if not image_bytes:
-            log(f"   ❌ Не удалось скачать картинку от {source_name}, переключаемся на следующий источник")
-            continue
-
-        log(f"✅ Картинка скачана, размер {len(image_bytes)} байт")
-        log("📤 Шаг 4: Публикация в VK...")
-        success, error, photo_uploaded, post_id = post_to_vk(image_bytes, post_text)
-
-        if success:
-            if photo_uploaded:
-                log(f"✅ Пост успешно опубликован с фото от {source_name}!")
-            else:
-                log(f"✅ Пост опубликован без фото (после проблем с загрузкой) от {source_name}")
-            break
+        if image_bytes:
+            log(f"✅ Картинка скачана, размер {len(image_bytes)} байт")
         else:
-            log(f"   ❌ Публикация с фото от {source_name} не удалась: {error}")
-            log(f"   🔄 Переключаемся на следующий источник...")
+            log("⚠️ Картинка не скачалась")
+    else:
+        log("⚠️ Картинка не сгенерирована")
 
-    if not success:
-        log("⚠️ Все источники не дали результат, публикуем без фото")
-        success, error, _, post_id = post_to_vk(None, post_text)
-        if success:
-            log("✅ Пост опубликован без фото (резервный вариант)")
-        else:
-            log(f"❌ Ошибка публикации без фото: {error}")
-
-    if success and post_id:
-        log(f"📊 Сбор статистики для поста {post_id}...")
-        time.sleep(10)
-        stats = fetch_post_stats(post_id, VK_GROUP_ID)
-        if stats:
-            update_post_history(niche, topic, post_id, stats)
-        else:
-            log(f"⚠️ Не удалось получить статистику для поста {post_id}")
+    log("📤 Шаг 3: Публикация...")
+    success, error, photo_uploaded, post_id = post_to_vk(image_bytes, post_text)
+    if success:
+        log("✅ Пост опубликован!")
+        if post_id:
+            time.sleep(5)
+            stats = fetch_post_stats(post_id, VK_GROUP_ID)
+            if stats:
+                update_post_history(niche, topic, post_id, stats)
+    else:
+        log(f"❌ Ошибка: {error}")
 
 # ===== ПЛАНИРОВЩИК =====
 def scheduler_loop():
-    log("🔄 Планировщик запущен (проверка каждые 30 секунд)")
+    log("🔄 Планировщик запущен")
     while True:
         try:
             now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -695,13 +635,12 @@ def scheduler_loop():
             else:
                 for item in schedule:
                     if item.get("niche") == "родительский" and item["time"] == now and not item.get("done", False):
-                        log(f"📢 Найдено задание: {item['topic']} в {item['time']}")
+                        log(f"📢 Найдено задание: {item['topic']}")
                         execute_scheduled_post(item)
                         item["done"] = True
                         save_schedule(schedule)
         except Exception as e:
-            log(f"⚠️ Ошибка в планировщике: {e}")
-            traceback.print_exc(file=sys.stdout)
+            log(f"⚠️ Ошибка планировщика: {e}")
         time.sleep(30)
 
 # ===== ОБРАБОТЧИКИ КОМАНД =====
@@ -712,117 +651,42 @@ def process_message(message):
 
     if text.startswith("/start"):
         send_message(chat_id,
-            "👋 Бот для автопостинга в Родительский навигатор.\n"
-            "👨‍👩‍👧‍👦 Экспертный блог о воспитании и семейной жизни.\n"
-            "📊 Бот собирает статистику и учится на успешных постах.\n"
-            "🖼️ Динамические картинки с реалистичными людьми и детьми.\n"
-            "📝 Посты с эмодзи, хештегами, структурой 70/20/10.\n"
-            "/post_in тема минуты — добавить пост через N минут\n"
-            "/run_now тема — опубликовать прямо сейчас\n"
-            "/list — показать все задания\n"
-            "/debug — показать содержимое schedule.json\n"
-            "/clear — удалить все задания\n"
-            "/stats — показать статистику постов"
+            "👋 Родительский бот.\n"
+            "/post_in тема минуты\n"
+            "/run_now тема\n"
+            "/list\n/debug\n/clear\n/stats"
         )
         return
 
     if text.startswith("/clear"):
         save_schedule([])
-        send_message(chat_id, "✅ Все запланированные задания удалены. Расписание очищено.")
-        log("🧹 Расписание очищено командой /clear")
+        send_message(chat_id, "✅ Расписание очищено.")
         return
 
     if text.startswith("/stats"):
         history = load_stats()
         if not history:
-            send_message(chat_id, "📭 Нет данных по постам.")
+            send_message(chat_id, "📭 Нет данных.")
             return
-        niche_groups = {}
-        for h in history:
-            niche = h.get("niche", "unknown")
-            if niche not in niche_groups:
-                niche_groups[niche] = []
-            niche_groups[niche].append(h)
-        msg = "📊 Статистика постов (топ по вовлечённости):\n"
-        for niche, posts in niche_groups.items():
-            sorted_posts = sorted(posts, key=lambda x: x.get("engagement", 0), reverse=True)[:5]
-            msg += f"\n🔹 {niche}:\n"
-            for i, p in enumerate(sorted_posts, 1):
-                topic = p.get("topic", "Без темы")[:60]
-                eng = p.get("engagement", 0)
-                likes = p.get("likes", 0)
-                msg += f"  {i}. {topic}... (❤️ {likes}, вовл. {eng:.1f}%)\n"
+        msg = "📊 Топ по вовлечённости:\n"
+        sorted_posts = sorted(history, key=lambda x: x.get("engagement", 0), reverse=True)[:5]
+        for i, p in enumerate(sorted_posts, 1):
+            topic = p.get("topic", "Без темы")[:50]
+            eng = p.get("engagement", 0)
+            likes = p.get("likes", 0)
+            msg += f"{i}. {topic}... ❤️{likes} вовл.{eng:.1f}%\n"
         send_message(chat_id, msg[:4000])
         return
 
     if text.startswith("/run_now"):
         topic = text.replace("/run_now", "").strip()
         if not topic:
-            send_message(chat_id, "❌ Укажи тему поста")
+            send_message(chat_id, "❌ Укажи тему")
             return
-        send_message(chat_id, f"⏳ Начинаю публикацию: '{topic}'...")
+        send_message(chat_id, f"⏳ Публикую...")
         def publish():
-            niche = "родительский"
-            log(f"📢 Ручная публикация (родительский): {topic}")
-            post_text = generate_post_text(topic)
-            if not post_text:
-                send_message(chat_id, "❌ Не удалось сгенерировать текст")
-                return
-
-            sources = [
-                ("Pollinations", generate_image_pollinations),
-                ("Agnes", generate_image_agnes)
-            ]
-
-            photo_uploaded = False
-            success = False
-            error = None
-            post_id = None
-
-            for source_name, gen_func in sources:
-                if not gen_func:
-                    continue
-                log(f"🖼️ Попытка генерации через {source_name}...")
-                prompt = build_image_prompt(topic, niche)
-                image_url = gen_func(prompt)
-                if not image_url:
-                    log(f"   ⚠️ {source_name} не дал URL, переключаемся")
-                    continue
-                log(f"✅ URL от {source_name}: {image_url[:60]}...")
-                image_bytes = download_image(image_url)
-                if not image_bytes:
-                    log(f"   ❌ Не удалось скачать от {source_name}, переключаемся")
-                    continue
-                log(f"✅ Картинка скачана, размер {len(image_bytes)} байт")
-                success, error, photo_uploaded, post_id = post_to_vk(image_bytes, post_text)
-                if success:
-                    if photo_uploaded:
-                        send_message(chat_id, f"✅ Пост опубликован с фото от {source_name}!")
-                    else:
-                        send_message(chat_id, f"✅ Пост опубликован без фото (после проблем с загрузкой) от {source_name}")
-                    break
-                else:
-                    log(f"   ❌ Публикация с фото от {source_name} не удалась: {error}")
-                    log(f"   🔄 Переключаемся на следующий источник...")
-
-            if not success:
-                log("⚠️ Все источники не дали результат, публикуем без фото")
-                success, error, _, post_id = post_to_vk(None, post_text)
-                if success:
-                    send_message(chat_id, "✅ Пост опубликован без фото (резерв)")
-                else:
-                    send_message(chat_id, f"❌ Ошибка публикации: {error}")
-
-            if success and post_id:
-                log(f"📊 Сбор статистики для поста {post_id}...")
-                time.sleep(10)
-                stats = fetch_post_stats(post_id, VK_GROUP_ID)
-                if stats:
-                    update_post_history(niche, topic, post_id, stats)
-                    send_message(chat_id, "📊 Статистика поста сохранена.")
-                else:
-                    log(f"⚠️ Не удалось получить статистику для поста {post_id}")
-
+            item = {"niche": "родительский", "topic": topic, "time": datetime.now().strftime("%Y-%m-%d %H:%M")}
+            execute_scheduled_post(item)
         threading.Thread(target=publish).start()
         return
 
@@ -830,12 +694,12 @@ def process_message(message):
         parts = text.replace("/post_in", "").strip()
         match = re.search(r'(\d+)$', parts)
         if not match:
-            send_message(chat_id, "❌ Укажи минуты (число в конце)")
+            send_message(chat_id, "❌ Укажи минуты")
             return
         minutes = int(match.group(1))
         topic = parts[:match.start()].strip()
         if not topic:
-            send_message(chat_id, "❌ Укажи тему поста")
+            send_message(chat_id, "❌ Укажи тему")
             return
         publish_time = datetime.now() + timedelta(minutes=minutes)
         full_time = publish_time.strftime("%Y-%m-%d %H:%M")
@@ -843,19 +707,18 @@ def process_message(message):
         new_id = str(int(time.time()))
         schedule.append({"id": new_id, "niche": "родительский", "topic": topic, "time": full_time, "done": False})
         save_schedule(schedule)
-        send_message(chat_id, f"✅ Пост добавлен в Родительский: '{topic}' в {full_time}")
+        send_message(chat_id, f"✅ Пост на {full_time}")
         return
 
     if text.startswith("/list"):
         schedule = load_schedule()
         if not schedule:
-            send_message(chat_id, "📭 Нет запланированных постов")
+            send_message(chat_id, "📭 Нет постов")
         else:
             lines = []
             for item in schedule:
                 status = "✅" if item.get("done") else "⏳"
-                niche_info = f"[{item.get('niche', 'ai')}] "
-                lines.append(f"{status} {niche_info}ID:{item['id']} {item['topic']} -> {item['time']}")
+                lines.append(f"{status} {item['topic']} -> {item['time']}")
             send_message(chat_id, "\n".join(lines[:10]))
         return
 
@@ -863,8 +726,7 @@ def process_message(message):
         try:
             if os.path.exists(SCHEDULE_FILE):
                 with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    send_message(chat_id, f"📄 Содержимое schedule.json:\n{content[:500]}")
+                    send_message(chat_id, f"📄 {f.read()[:500]}")
             else:
                 send_message(chat_id, "❌ Файл не найден")
         except Exception as e:
@@ -873,9 +735,8 @@ def process_message(message):
 
 def send_message(chat_id, text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
     try:
-        requests.post(url, json=payload, timeout=10)
+        requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
     except Exception as e:
         log(f"⚠️ Ошибка отправки: {e}")
 
@@ -888,7 +749,7 @@ def get_updates(offset):
         if resp.status_code == 200:
             data = resp.json()
             if data.get("result"):
-                log(f"📨 Получены обновления: {len(data['result'])} сообщений")
+                log(f"📨 Получены обновления: {len(data['result'])}")
                 return data["result"]
         else:
             log(f"⚠️ getUpdates ошибка: {resp.status_code}")
@@ -898,7 +759,7 @@ def get_updates(offset):
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Бот для Родительского навигатора (исправленные промпты) запущен")
+    log("🤖 Родительский бот запущен")
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
     while True:
