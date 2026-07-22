@@ -12,8 +12,9 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ===== ИМПОРТ НАСТРОЕК КАРТИНОК ИЗ ОТДЕЛЬНОГО ФАЙЛА =====
+# ===== ИМПОРТ НАСТРОЕК ИЗ ОТДЕЛЬНЫХ ФАЙЛОВ =====
 import image_prompts as img_cfg
+import text_prompts as txt_cfg
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -65,7 +66,7 @@ if not AGNES_API_KEY:
 if not GIGACHAT_API_KEY:
     log("⚠️ GIGACHAT_API_KEY не задан (будет пропущен)")
 
-log("🚀 Запуск родительского бота (увеличенные таймауты, расширенное логирование)")
+log("🚀 Запуск родительского бота (Agnes → GigaChat → Pollinations, с отдельными настройками)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -188,37 +189,31 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (стабильная, с fallback) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (использует text_prompts.py) =====
 # ============================================================
 
 def generate_post_text(topic):
     log(f"🔤 Генерация текста для темы: {topic}")
     if not AGNES_API_KEY:
         log("   ⚠️ AGNES_API_KEY не задан, используем fallback")
-        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+        return txt_cfg.get_fallback_text(topic)
 
-    system_prompt = (
-        "Ты — эксперт в области воспитания детей, семейной психологии, образования и здорового развития. "
-        "Напиши полезный, тёплый и поддерживающий пост для родителей по теме. "
-        "Структура: 70% полезный контент, 20% примеры/обсуждение, 10% вопрос к аудитории. "
-        "Используй эмодзи, разделители. В конце добавь 5 хештегов."
-    )
-    user_prompt = f"Тема: {topic}"
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
     data = {
-        "model": "agnes-2.0-flash",
+        "model": txt_cfg.TEXT_MODEL,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "system", "content": txt_cfg.build_system_prompt()},
+            {"role": "user", "content": txt_cfg.build_user_prompt(topic)}
         ],
-        "temperature": 0.85
+        "temperature": txt_cfg.TEXT_TEMPERATURE,
+        "max_tokens": txt_cfg.TEXT_MAX_TOKENS
     }
     def _do():
         response = requests.post(
             "https://apihub.agnes-ai.com/v1/chat/completions",
             headers=headers,
             json=data,
-            timeout=60
+            timeout=txt_cfg.TEXT_TIMEOUT
         )
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
@@ -227,13 +222,14 @@ def generate_post_text(topic):
     try:
         text = retry_call(_do, max_retries=2, delay=2, backoff=2)
         log(f"   Текст получен, длина {len(text)}")
-        return text
+        processed = txt_cfg.post_process_text(text)
+        return processed if processed else txt_cfg.get_fallback_text(topic)
     except Exception as e:
         log(f"   ❌ Генерация текста провалилась: {e}")
-        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+        return txt_cfg.get_fallback_text(topic)
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (увеличенные таймауты, расширенное логирование) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (использует image_prompts.py) =====
 # ============================================================
 
 def build_image_prompt(topic):
@@ -246,13 +242,13 @@ def generate_image_agnes(prompt):
         return None
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
     data = {
-        "model": "agnes-image-2.1-flash",
+        "model": img_cfg.AGNES_IMAGE_PARAMS["model"],
         "prompt": prompt,
-        "size": "1024x1024",
-        "n": 1
+        "size": img_cfg.AGNES_IMAGE_PARAMS["size"],
+        "n": img_cfg.AGNES_IMAGE_PARAMS["n"]
     }
     def _do():
-        log("   Отправка запроса к Agnes (таймаут %d сек)" % img_cfg.TIMEOUT_AGNES)
+        log(f"   Отправка запроса к Agnes (таймаут {img_cfg.TIMEOUT_AGNES} сек)")
         response = requests.post(
             "https://apihub.agnes-ai.com/v1/images/generations",
             headers=headers,
@@ -286,13 +282,13 @@ def generate_image_gigachat(prompt):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "GigaChat-Image",
+        "model": img_cfg.GIGACHAT_IMAGE_PARAMS["model"],
         "prompt": prompt,
-        "size": "1024x1024",
-        "n": 1
+        "size": img_cfg.GIGACHAT_IMAGE_PARAMS["size"],
+        "n": img_cfg.GIGACHAT_IMAGE_PARAMS["n"]
     }
     def _do():
-        log("   Отправка запроса к GigaChat (таймаут %d сек)" % img_cfg.TIMEOUT_GIGACHAT)
+        log(f"   Отправка запроса к GigaChat (таймаут {img_cfg.TIMEOUT_GIGACHAT} сек)")
         response = requests.post(
             "https://gigachat.devices.sberbank.ru/api/v1/images/generations",
             headers=headers,
@@ -320,10 +316,9 @@ def generate_image_gigachat(prompt):
 def generate_image_pollinations(prompt):
     log("   🖼️ Попытка Pollinations...")
     try:
-        # Добавляем суффикс для качества
         short_prompt = prompt[:250] + img_cfg.SUFFIX_POLLINATIONS
         prompt_encoded = urllib.parse.quote(short_prompt)
-        url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
+        url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width={img_cfg.POLLINATIONS_IMAGE_PARAMS['width']}&height={img_cfg.POLLINATIONS_IMAGE_PARAMS['height']}&nologo=true"
         log(f"   Pollinations URL сформирован: {url[:80]}...")
         # Проверяем доступность (HEAD)
         try:
@@ -333,7 +328,7 @@ def generate_image_pollinations(prompt):
                 return url
             else:
                 log(f"   ⚠️ Pollinations HEAD вернул {head_resp.status_code}, но попробуем GET позже")
-                return url  # всё равно возвращаем URL, скачивание покажет ошибку
+                return url
         except Exception as e:
             log(f"   ⚠️ Pollinations HEAD не удался: {e}, но всё равно попробуем")
             return url
@@ -347,7 +342,7 @@ def generate_image(topic):
     log(f"   Промпт: {prompt[:200]}...")
 
     # Цепочка с увеличенными попытками
-    for attempt in range(2):  # две попытки всей цепочки
+    for attempt in range(2):
         log(f"   Попытка {attempt+1}/2")
         url = generate_image_agnes(prompt)
         if url:
@@ -372,7 +367,6 @@ def download_image(url):
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
         content = response.content
-        # Проверка на HTML (Pollinations может вернуть ошибку в HTML)
         if b"<html" in content[:200] or b"<!DOCTYPE" in content[:200]:
             raise Exception("Получен HTML вместо изображения")
         if len(content) < 100:
@@ -566,7 +560,7 @@ def execute_scheduled_post(item):
     if success:
         log("✅ Пост успешно опубликован!")
         if post_id:
-            # сбор статистики (опционально)
+            # Можно добавить сбор статистики
             pass
     else:
         log(f"❌ Ошибка публикации: {error}")
@@ -719,7 +713,7 @@ def add_test_post_if_empty():
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот (увеличенные таймауты, расширенное логирование) запущен")
+    log("🤖 Родительский бот (с отдельными настройками) запущен")
     add_test_post_if_empty()
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
