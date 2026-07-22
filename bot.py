@@ -15,6 +15,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # ===== ИМПОРТ НАСТРОЕК ИЗ ОТДЕЛЬНЫХ ФАЙЛОВ =====
 import image_prompts as img_cfg
 import text_prompts as txt_cfg
+import vk_feeds   # <-- НОВЫЙ ИМПОРТ
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -66,7 +67,7 @@ if not AGNES_API_KEY:
 if not GIGACHAT_API_KEY:
     log("⚠️ GIGACHAT_API_KEY не задан (будет пропущен)")
 
-log("🚀 Запуск родительского бота (Agnes → GigaChat → Pollinations, с отдельными настройками)")
+log("🚀 Запуск родительского бота (Agnes → GigaChat → Pollinations, с отдельными настройками, VK Feeds)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -587,6 +588,35 @@ def scheduler_loop():
             traceback.print_exc(file=sys.stdout)
         time.sleep(30)
 
+# ===== VK FEEDS ФОНОВЫЙ ПОТОК (добавлен) =====
+def vk_feeds_scheduler_loop():
+    """Фоновый поток для проверки групп ВК и добавления постов в расписание."""
+    while True:
+        try:
+            new_posts = vk_feeds.fetch_and_generate_topics_from_vk(limit=3)
+            for post_data in new_posts:
+                niche = post_data['niche']
+                topic = post_data['topic']
+                # Публикуем через 5 минут после обнаружения
+                minutes = 5
+                publish_time = datetime.now() + timedelta(minutes=minutes)
+                full_time = publish_time.strftime("%Y-%m-%d %H:%M")
+                schedule = load_schedule()
+                new_id = str(int(time.time()))
+                schedule.append({
+                    "id": new_id,
+                    "niche": niche,
+                    "topic": topic,
+                    "time": full_time,
+                    "done": False
+                })
+                save_schedule(schedule)
+                log(f"📰 Добавлен пост из ВК в нишу '{niche}': {topic[:50]}...")
+        except Exception as e:
+            log(f"⚠️ Ошибка в VK Feeds планировщике: {e}")
+        # Пауза между проверками (2 часа)
+        time.sleep(2 * 60 * 60)
+
 # ===== ОБРАБОТЧИКИ КОМАНД =====
 def process_message(message):
     chat_id = message["chat"]["id"]
@@ -713,9 +743,15 @@ def add_test_post_if_empty():
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот (с отдельными настройками) запущен")
+    log("🤖 Родительский бот (с отдельными настройками и VK Feeds) запущен")
     add_test_post_if_empty()
+
+    # Запускаем основной планировщик
     threading.Thread(target=scheduler_loop, daemon=True).start()
+
+    # Запускаем поток для VK Feeds (добавлен)
+    threading.Thread(target=vk_feeds_scheduler_loop, daemon=True).start()
+
     update_id = 0
     while True:
         updates = get_updates(update_id + 1)
