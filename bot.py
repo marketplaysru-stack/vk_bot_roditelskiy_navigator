@@ -37,9 +37,9 @@ def log(msg):
     logging.info(msg)
 
 # ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
-BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")          # Токен родительского Telegram-бота
-VK_TOKEN = os.getenv("VK_TOKEN_PARENT")         # Токен родительской группы (с правами photos)
-VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")   # -197687739
+BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
+VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
+VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
 PORT = int(os.getenv("PORT", 8081))
 
@@ -60,7 +60,7 @@ except ValueError:
 if not AGNES_API_KEY:
     log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск родительского бота (стабильная версия, улучшенные реалистичные люди)")
+log("🚀 Запуск родительского бота (с увеличенным таймаутом и fallback)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -159,7 +159,7 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (родительская тематика) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (с увеличенным таймаутом и fallback) =====
 # ============================================================
 
 def generate_post_text(topic):
@@ -185,25 +185,26 @@ def generate_post_text(topic):
             "https://apihub.agnes-ai.com/v1/chat/completions",
             headers=headers,
             json=data,
-            timeout=30
+            timeout=60  # увеличен до 60 секунд
         )
         if response.status_code != 200:
             log(f"   ❌ Ошибка HTTP {response.status_code}")
-            return None
+            # fallback: простой текст
+            return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
         result = response.json()
         if "choices" in result and len(result["choices"]) > 0:
             content = result["choices"][0]["message"]["content"]
             if content:
                 log(f"   Текст получен, длина {len(content)}")
                 return content
-        log("   ❌ Пустой ответ от Agnes")
-        return None
+        log("   ❌ Пустой ответ от Agnes, используем fallback")
+        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
     except requests.exceptions.Timeout:
-        log("   ❌ Таймаут при генерации текста (Agnes не ответил за 30 сек)")
-        return None
+        log("   ❌ Таймаут при генерации текста (Agnes не ответил за 60 сек), используем fallback")
+        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
     except Exception as e:
-        log(f"   ❌ Ошибка генерации текста: {e}")
-        return None
+        log(f"   ❌ Ошибка генерации текста: {e}, используем fallback")
+        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
 
 # ============================================================
 # ===== МОДУЛЬ СТАТИСТИКИ =====
@@ -269,7 +270,7 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (улучшенные реалистичные люди, европеоидная раса) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (улучшенные реалистичные люди, европеоидная раса, Москва) =====
 # ============================================================
 
 def build_image_prompt(topic):
@@ -287,7 +288,6 @@ def build_image_prompt(topic):
 def generate_image_pollinations(prompt):
     log("   🖼️ Pollinations...")
     try:
-        # Укорачиваем промпт до 200 символов для Pollinations
         short_prompt = prompt[:200] + " Moscow family, European features, photorealistic, 8k, highly detailed"
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
@@ -512,8 +512,8 @@ def execute_scheduled_post(item):
     log("🔤 Шаг 1: Генерация текста...")
     post_text = generate_post_text(topic)
     if not post_text:
-        log("❌ Текст не сгенерирован (таймаут или ошибка), пропускаем пост")
-        return
+        log("❌ Текст не сгенерирован, используем fallback")
+        post_text = f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
     log(f"✅ Текст получен, длина {len(post_text)}")
 
     log("🖼️ Шаг 2: Генерация картинки...")
