@@ -37,9 +37,9 @@ def log(msg):
     logging.info(msg)
 
 # ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
-BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
-VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
-VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
+BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")          # Токен родительского Telegram-бота
+VK_TOKEN = os.getenv("VK_TOKEN_PARENT")         # Токен родительской группы (с правами photos)
+VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")   # -197687739
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
 PORT = int(os.getenv("PORT", 8081))
 
@@ -60,7 +60,7 @@ except ValueError:
 if not AGNES_API_KEY:
     log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск родительского бота (стабильный, с московским антуражем)")
+log("🚀 Запуск родительского бота (стабильная версия, улучшенные реалистичные люди)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -159,7 +159,7 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (с таймаутом 30 сек) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (родительская тематика) =====
 # ============================================================
 
 def generate_post_text(topic):
@@ -269,23 +269,26 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (с уточнением "москвичи") =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (улучшенные реалистичные люди, европеоидная раса) =====
 # ============================================================
 
 def build_image_prompt(topic):
     base = (
         f"Семья, родители и дети, счастливые моменты, уют, тепло, связанные с темой: {topic}. "
-        "Люди — типичные москвичи, русская внешность (европеоидная раса, светлые или русые волосы, светлая кожа), "
-        "одеты по погоде, в городской одежде. Действие происходит в Москве: уютные московские дворы, парки, "
-        "современные или сталинские дома, зелёные бульвары. Реалистичное фото, естественные пропорции, без искажений. "
-        "Тёплые тона, мягкое освещение. Без текста."
+        "Люди — типичные москвичи, европеоидная внешность: светлая кожа, русые или светлые волосы, "
+        "европейские черты лица, реалистичные, без искажений, с высокой детализацией кожи и глаз. "
+        "Одежда современная, городская, соответствует московскому стилю. "
+        "Действие происходит в Москве: уютные дворы, парки, улицы с характерной архитектурой. "
+        "Фотореализм, 8K, сверхдетализированное изображение, естественные пропорции, "
+        "мягкое естественное освещение, тёплые тона. Без текста и надписей."
     )
     return base
 
 def generate_image_pollinations(prompt):
     log("   🖼️ Pollinations...")
     try:
-        short_prompt = prompt[:200] + " Moscow family, Russian, photorealistic"
+        # Укорачиваем промпт до 200 символов для Pollinations
+        short_prompt = prompt[:200] + " Moscow family, European features, photorealistic, 8k, highly detailed"
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
         log("   ✅ URL сформирован")
