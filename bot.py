@@ -60,7 +60,7 @@ except ValueError:
 if not AGNES_API_KEY:
     log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск бота для Родительского навигатора (исправленная версия)")
+log("🚀 Запуск родительского бота (быстрый, с таймаутами)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -134,30 +134,6 @@ try:
 except Exception as e:
     log(f"⚠️ Ошибка удаления вебхука: {e}")
 
-# ===== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ RETRY =====
-def retry_call(func, *args, max_retries=3, delay=2, backoff=2, **kwargs):
-    last_exception = None
-    for attempt in range(max_retries):
-        try:
-            result = func(*args, **kwargs)
-            if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], bool):
-                if not result[0] and attempt < max_retries - 1:
-                    raise Exception(f"Function returned failure: {result[1]}")
-                return result
-            if isinstance(result, dict) and result.get('error'):
-                raise Exception(result['error'].get('error_msg', 'Unknown API error'))
-            return result
-        except Exception as e:
-            last_exception = e
-            log(f"   ⚠️ Попытка {attempt+1}/{max_retries} не удалась: {e}")
-            if attempt < max_retries - 1:
-                sleep_time = delay * (backoff ** attempt)
-                log(f"   ⏳ Повтор через {sleep_time:.1f} сек...")
-                time.sleep(sleep_time)
-            else:
-                log(f"   ❌ Все {max_retries} попыток провалились")
-    raise last_exception
-
 # ===== РАБОТА С РАСПИСАНИЕМ =====
 def load_schedule():
     try:
@@ -183,24 +159,16 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (рабочая, с проверкой) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (с жёстким таймаутом 30 сек) =====
 # ============================================================
 
 def generate_post_text(topic):
     log(f"🔤 Генерация текста для темы: {topic}")
     system_prompt = (
         "Ты — эксперт в области воспитания детей, семейной психологии, образования и здорового развития. "
-        "Твоя задача — писать полезные, тёплые и поддерживающие посты для родителей. "
-        "Ты делишься советами, разбираешь типичные ситуации, даёшь рекомендации по общению с детьми, здоровью, досугу, обучению. "
-        "Ты не продаёшь услуги, а помогаешь родителям чувствовать себя увереннее и счастливее. "
-        "Формат поста: дружелюбный, понимающий, без осуждения. "
-        "Пост должен быть структурирован по модели 70/20/10:\n"
-        "   — 70%: полезный экспертный контент.\n"
-        "   — 20%: обсуждение, примеры из жизни.\n"
-        "   — 10%: вовлекающий элемент — вопрос к аудитории.\n"
-        "Используй эмодзи для разделения смысловых блоков (👶, 👨‍👩‍👧‍👦, 💡, ❤️, 🌱, 📚, 🎨, 🧸).\n"
-        "В конце поста обязательно добавь 5 хештегов на русском языке.\n"
-        "Пост должен быть визуально привлекательным, легко читаемым, с короткими абзацами."
+        "Напиши полезный, тёплый и поддерживающий пост для родителей по теме. "
+        "Структура: 70% полезный контент, 20% примеры/обсуждение, 10% вопрос к аудитории. "
+        "Используй эмодзи, разделители. В конце добавь 5 хештегов."
     )
     user_prompt = f"Тема: {topic}"
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
@@ -212,28 +180,29 @@ def generate_post_text(topic):
         ],
         "temperature": 0.85
     }
-    def _do():
+    try:
         response = requests.post(
             "https://apihub.agnes-ai.com/v1/chat/completions",
             headers=headers,
             json=data,
-            timeout=120
+            timeout=30  # жесткий таймаут 30 секунд
         )
         if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
+            log(f"   ❌ Ошибка HTTP {response.status_code}")
+            return None
         result = response.json()
-        if "choices" not in result or len(result["choices"]) == 0:
-            raise Exception("Нет choices в ответе")
-        content = result["choices"][0]["message"]["content"]
-        if not content:
-            raise Exception("Пустой текст")
-        return content
-    try:
-        text = retry_call(_do, max_retries=2, delay=2, backoff=2)
-        log(f"   Текст получен, длина {len(text)}")
-        return text
+        if "choices" in result and len(result["choices"]) > 0:
+            content = result["choices"][0]["message"]["content"]
+            if content:
+                log(f"   Текст получен, длина {len(content)}")
+                return content
+        log("   ❌ Пустой ответ от Agnes")
+        return None
+    except requests.exceptions.Timeout:
+        log("   ❌ Таймаут при генерации текста (Agnes не ответил за 30 сек)")
+        return None
     except Exception as e:
-        log(f"   ❌ Генерация текста провалилась: {e}")
+        log(f"   ❌ Ошибка генерации текста: {e}")
         return None
 
 # ============================================================
@@ -276,7 +245,7 @@ def fetch_post_stats(post_id, owner_id):
                 return {"likes": likes, "reposts": reposts, "comments": comments, "views": views}
         return None
     except Exception as e:
-        log(f"⚠️ Исключение при получении статистики: {e}")
+        log(f"⚠️ Ошибка получения статистики: {e}")
         return None
 
 def update_post_history(niche, topic, post_id, stats):
@@ -299,122 +268,23 @@ def update_post_history(niche, topic, post_id, stats):
     log(f"📊 Сохранена статистика поста {post_id}: likes={stats['likes']}, engagement={engagement:.2f}%")
     return record
 
-def get_best_topics(niche, limit=5):
-    history = load_stats()
-    niche_posts = [h for h in history if h.get("niche") == niche]
-    if not niche_posts:
-        return []
-    sorted_posts = sorted(niche_posts, key=lambda x: x.get("engagement", 0), reverse=True)
-    seen = set()
-    best = []
-    for post in sorted_posts:
-        topic = post.get("topic", "")
-        if topic and topic not in seen:
-            seen.add(topic)
-            best.append(topic)
-            if len(best) >= limit:
-                break
-    return best
-
-def enhance_topic_with_best_topics(niche, original_topic):
-    best = get_best_topics(niche, limit=3)
-    if not best:
-        return original_topic
-    return f"{original_topic} (учитывая успешные форматы: {', '.join(best)})"
-
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (реалистичные промпты) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (приоритет Pollinations) =====
 # ============================================================
 
-def build_image_prompt(topic, niche):
-    # Определяем тип сцены
-    keywords_lower = topic.lower()
-    scene_type = "generic"
-    if any(word in keywords_lower for word in ["игра", "игрушка", "забава", "досуг"]):
-        scene_type = "play"
-    elif any(word in keywords_lower for word in ["обучение", "чтение", "школа", "урок", "развитие"]):
-        scene_type = "learning"
-    elif any(word in keywords_lower for word in ["здоровье", "спорт", "питание", "режим", "сон"]):
-        scene_type = "health"
-    elif any(word in keywords_lower for word in ["психология", "чувства", "эмоции", "общение"]):
-        scene_type = "psychology"
-    elif any(word in keywords_lower for word in ["воспитание", "дисциплина", "границы", "правила"]):
-        scene_type = "upbringing"
-    elif any(word in keywords_lower for word in ["семья", "выходной", "праздник", "традиция"]):
-        scene_type = "family"
-    elif any(word in keywords_lower for word in ["дом", "уют", "интерьер", "порядок"]):
-        scene_type = "home"
-    else:
-        scene_type = "generic"
-
-    scene_descriptions = {
-        "play": "Дети играют в развивающие игры. Реалистичные дети с естественной кожей, волосами и пропорциями. Радость, смех, свобода. Мягкое освещение, тёплые тона.",
-        "learning": "Ребёнок за чтением книги, школьные принадлежности. Реалистичный ребёнок, естественная поза. Мягкий свет.",
-        "health": "Дети на прогулке, спорт, фрукты. Реалистичные дети, активные. Естественные цвета.",
-        "psychology": "Тёплая беседа родителей и ребёнка. Реалистичные лица, доверие, объятия. Мягкие цвета.",
-        "upbringing": "Родители и дети, совместные занятия. Реалистичные люди, добрые лица.",
-        "family": "Счастливая семья: родители и дети вместе. Реалистичные лица, естественные улыбки.",
-        "home": "Уютный дом, семейные традиции. Реалистичные люди, естественные позы.",
-        "generic": "Счастливая семья, родители и дети. Фотореалистичные люди, тёплые тона."
-    }
-
-    angles = ["крупный план", "средний план", "общий план", "панорамный обзор"]
-    lightings = ["солнечный свет", "мягкий рассеянный свет", "естественный дневной свет"]
-    moods = ["уютный, тёплый", "спокойный", "дружелюбный"]
-
-    angle = random.choice(angles)
-    lighting = random.choice(lightings)
-    mood = random.choice(moods)
-
-    scene_desc = scene_descriptions.get(scene_type, scene_descriptions["generic"])
-    enhanced_topic = enhance_topic_with_best_topics(niche, topic)
-
-    prompt = (
-        f"Hyperrealistic photo, square 1:1, {enhanced_topic}. "
-        f"{scene_desc} "
-        f"Фотореализм, естественные пропорции, без искажений. "
-        f"Ракурс: {angle}. Освещение: {lighting}. Настроение: {mood}. "
-        "Без текста. 8K качество."
+def build_image_prompt(topic):
+    # Упрощённый промпт для Pollinations (быстрый и стабильный)
+    base = (
+        f"Семья, родители и дети, счастливые моменты, уют, тепло, связанные с темой: {topic}. "
+        "Реалистичное фото, естественные пропорции, без искажений. "
+        "Тёплые тона, мягкое освещение. Без текста."
     )
-    return prompt
-
-def generate_image_agnes(prompt):
-    log("   🖼️ Попытка Agnes...")
-    if not AGNES_API_KEY:
-        log("   AGNES_API_KEY не задан")
-        return None
-    headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "agnes-image-2.1-flash",
-        "prompt": prompt,
-        "size": "1024x1024",
-        "n": 1
-    }
-    def _do():
-        response = requests.post(
-            "https://apihub.agnes-ai.com/v1/images/generations",
-            headers=headers,
-            json=data,
-            timeout=180
-        )
-        if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}")
-        json_resp = response.json()
-        if not json_resp.get("data") or len(json_resp["data"]) == 0:
-            raise Exception("Empty data")
-        return json_resp["data"][0]["url"]
-    try:
-        url = retry_call(_do, max_retries=2, delay=3, backoff=2)
-        log("   ✅ Agnes успешно")
-        return url
-    except Exception as e:
-        log(f"   ❌ Agnes окончательно: {e}")
-        return None
+    return base
 
 def generate_image_pollinations(prompt):
-    log("   🖼️ Попытка Pollinations...")
+    log("   🖼️ Pollinations...")
     try:
-        short_prompt = prompt[:200] + " photorealistic, high quality"
+        short_prompt = prompt[:200] + " photorealistic, family, happy"
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
         log("   ✅ URL сформирован")
@@ -423,61 +293,94 @@ def generate_image_pollinations(prompt):
         log(f"   ❌ Pollinations исключение: {e}")
         return None
 
-def download_image(url):
-    log(f"📥 Скачивание картинки: {url[:60]}...")
-    def _do():
-        response = requests.get(url, timeout=60)
-        if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}")
-        content = response.content
-        if b"<html" in content[:100] or len(content) < 100:
-            raise Exception("Некорректный ответ")
-        return content
+def generate_image_agnes(prompt):
+    log("   🖼️ Agnes (резерв)...")
+    if not AGNES_API_KEY:
+        return None
+    headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
+    data = {
+        "model": "agnes-image-2.1-flash",
+        "prompt": prompt,
+        "size": "1024x1024",
+        "n": 1
+    }
     try:
-        content = retry_call(_do, max_retries=2, delay=2, backoff=2)
-        log(f"   Успешно, размер {len(content)} байт")
-        return content
+        response = requests.post(
+            "https://apihub.agnes-ai.com/v1/images/generations",
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        if response.status_code != 200:
+            log(f"   ❌ HTTP {response.status_code}")
+            return None
+        json_resp = response.json()
+        if json_resp.get("data") and len(json_resp["data"]) > 0:
+            url = json_resp["data"][0]["url"]
+            log("   ✅ Agnes успешно")
+            return url
+        return None
     except Exception as e:
-        log(f"   ❌ Скачивание провалилось: {e}")
+        log(f"   ❌ Agnes ошибка: {e}")
         return None
 
-def generate_image(topic, niche):
+def generate_image(topic):
     log(f"🖼️ Генерация картинки для темы: {topic}")
-    prompt = build_image_prompt(topic, niche)
+    prompt = build_image_prompt(topic)
     log(f"   Промпт: {prompt[:150]}...")
-    url = generate_image_agnes(prompt)
+    # Сначала Pollinations
+    url = generate_image_pollinations(prompt)
     if url:
         return url
-    url = generate_image_pollinations(prompt)
+    # Затем Agnes
+    url = generate_image_agnes(prompt)
     if url:
         return url
     log("❌ Все источники недоступны")
     return None
 
+def download_image(url):
+    log(f"📥 Скачивание картинки: {url[:60]}...")
+    try:
+        response = requests.get(url, timeout=30)
+        if response.status_code == 200:
+            content = response.content
+            if b"<html" not in content[:100] and len(content) > 100:
+                log(f"   Успешно, размер {len(content)} байт")
+                return content
+        log(f"   ❌ Ошибка скачивания: статус {response.status_code}")
+        return None
+    except Exception as e:
+        log(f"   ❌ Исключение при скачивании: {e}")
+        return None
+
 # ===== ПУБЛИКАЦИЯ В VK =====
-def vk_api_request(method, params, token, retries=3):
+def vk_api_request(method, params, token, retries=2):
     base_url = "https://api.vk.com/method/"
     params = params.copy()
     params["access_token"] = token
     params["v"] = "5.131"
     post_methods = ["wall.post", "wall.getById", "photos.saveWallPhoto"]
     use_post = method in post_methods
-    def _do():
-        if use_post:
-            response = requests.post(base_url + method, data=params, timeout=60)
-        else:
-            response = requests.get(base_url + method, params=params, timeout=60)
-        if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}")
-        json_resp = response.json()
-        if "error" in json_resp:
-            raise Exception(json_resp["error"]["error_msg"])
-        return json_resp["response"]
-    try:
-        return retry_call(_do, max_retries=retries, delay=2, backoff=2)
-    except Exception as e:
-        log(f"   ❌ Ошибка VK API ({method}): {e}")
-        return None
+    for attempt in range(retries):
+        try:
+            if use_post:
+                response = requests.post(base_url + method, data=params, timeout=30)
+            else:
+                response = requests.get(base_url + method, params=params, timeout=30)
+            if response.status_code != 200:
+                log(f"   ⚠️ HTTP {response.status_code}, попытка {attempt+1}/{retries}")
+                continue
+            json_resp = response.json()
+            if "error" in json_resp:
+                log(f"   ⚠️ VK ошибка: {json_resp['error']['error_msg']}, попытка {attempt+1}/{retries}")
+                continue
+            return json_resp["response"]
+        except Exception as e:
+            log(f"   ⚠️ Исключение VK: {e}, попытка {attempt+1}/{retries}")
+            time.sleep(1)
+    log(f"   ❌ VK API {method} не удался после {retries} попыток")
+    return None
 
 def post_to_vk(image_bytes, text):
     log(f"📤 Начало публикации в родительскую группу (ID {VK_GROUP_ID})")
@@ -486,7 +389,7 @@ def post_to_vk(image_bytes, text):
 
     if image_bytes is None:
         log("   Публикация без фото")
-        result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
+        result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=2)
         if result is None:
             return False, "Ошибка публикации текста", False, None
         post_id = result.get("post_id")
@@ -495,7 +398,7 @@ def post_to_vk(image_bytes, text):
 
     if not HAS_PHOTO_PERMISSION:
         log("   ⚠️ Токен не имеет права 'photos', публикуем без фото")
-        result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
+        result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=2)
         if result is None:
             return False, "Ошибка публикации текста (нет прав photos)", False, None
         post_id = result.get("post_id")
@@ -505,10 +408,10 @@ def post_to_vk(image_bytes, text):
     log("   Публикация с фото")
     try:
         log("   Шаг 1: Получение upload_url...")
-        upload_resp = vk_api_request("photos.getWallUploadServer", {"group_id": abs(group_id)}, token=token, retries=3)
+        upload_resp = vk_api_request("photos.getWallUploadServer", {"group_id": abs(group_id)}, token=token, retries=2)
         if upload_resp is None:
             log("   ❌ upload_url не получен, публикуем без фото")
-            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
+            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=2)
             if result is None:
                 return False, "Ошибка публикации", False, None
             post_id = result.get("post_id")
@@ -517,33 +420,47 @@ def post_to_vk(image_bytes, text):
         upload_url = upload_resp["upload_url"]
 
         log("   Шаг 2: Загрузка фото...")
-        def _upload():
-            files = {"photo": ("image.jpg", image_bytes, "image/jpeg")}
-            resp = requests.post(upload_url, files=files, timeout=60)
-            if resp.status_code != 200:
-                raise Exception(f"HTTP {resp.status_code}")
-            data = resp.json()
-            if data.get("error"):
-                raise Exception(f"Ошибка загрузки: {data['error']}")
-            if not all(k in data for k in ("server", "photo", "hash")):
-                raise Exception(f"Неполный ответ: {data}")
-            return data
-
-        up = retry_call(_upload, max_retries=2, delay=2, backoff=2)
+        files = {"photo": ("image.jpg", image_bytes, "image/jpeg")}
+        resp = requests.post(upload_url, files=files, timeout=30)
+        if resp.status_code != 200:
+            log(f"   ❌ Ошибка загрузки: HTTP {resp.status_code}, публикуем без фото")
+            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=2)
+            if result is None:
+                return False, "Ошибка публикации после загрузки", False, None
+            post_id = result.get("post_id")
+            log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {post_id}")
+            return True, None, False, post_id
+        data = resp.json()
+        if data.get("error"):
+            log(f"   ❌ Ошибка загрузки: {data['error']}, публикуем без фото")
+            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=2)
+            if result is None:
+                return False, "Ошибка публикации после загрузки", False, None
+            post_id = result.get("post_id")
+            log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {post_id}")
+            return True, None, False, post_id
+        if not all(k in data for k in ("server", "photo", "hash")):
+            log(f"   ❌ Неполный ответ загрузки: {data}, публикуем без фото")
+            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=2)
+            if result is None:
+                return False, "Ошибка публикации после загрузки", False, None
+            post_id = result.get("post_id")
+            log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {post_id}")
+            return True, None, False, post_id
 
         log("   Шаг 3: Сохранение фото...")
         save_params = {
             "group_id": abs(group_id),
-            "server": up["server"],
-            "photo": up["photo"],
-            "hash": up["hash"]
+            "server": data["server"],
+            "photo": data["photo"],
+            "hash": data["hash"]
         }
-        save_resp = vk_api_request("photos.saveWallPhoto", save_params, token=token, retries=3)
+        save_resp = vk_api_request("photos.saveWallPhoto", save_params, token=token, retries=2)
         if save_resp is None:
             log("   ❌ Ошибка сохранения фото, публикуем без фото")
-            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
+            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=2)
             if result is None:
-                return False, "Ошибка публикации", False, None
+                return False, "Ошибка публикации после сохранения", False, None
             post_id = result.get("post_id")
             log(f"✅ Пост опубликован (без фото) в группе {group_id}, ID: {post_id}")
             return True, None, False, post_id
@@ -558,10 +475,10 @@ def post_to_vk(image_bytes, text):
             "attachments": attachment,
             "from_group": 1
         }
-        post_resp = vk_api_request("wall.post", post_params, token=token, retries=3)
+        post_resp = vk_api_request("wall.post", post_params, token=token, retries=2)
         if post_resp is None:
             log("   ❌ Ошибка публикации с фото, пробуем без фото")
-            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
+            result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=2)
             if result is None:
                 return False, "Ошибка публикации", False, None
             post_id = result.get("post_id")
@@ -574,7 +491,7 @@ def post_to_vk(image_bytes, text):
 
     except Exception as e:
         log(f"   ❌ Исключение в post_to_vk: {e}")
-        result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=3)
+        result = vk_api_request("wall.post", {"owner_id": group_id, "message": text, "from_group": 1}, token=token, retries=2)
         if result is not None:
             post_id = result.get("post_id")
             log(f"✅ Пост опубликован (без фото) после исключения, ID: {post_id}")
@@ -593,12 +510,12 @@ def execute_scheduled_post(item):
     log("🔤 Шаг 1: Генерация текста...")
     post_text = generate_post_text(topic)
     if not post_text:
-        log("❌ Текст не сгенерирован")
+        log("❌ Текст не сгенерирован (таймаут или ошибка), пропускаем пост")
         return
     log(f"✅ Текст получен, длина {len(post_text)}")
 
     log("🖼️ Шаг 2: Генерация картинки...")
-    image_url = generate_image(topic, niche)
+    image_url = generate_image(topic)
     image_bytes = None
     if image_url:
         log(f"✅ URL: {image_url[:60]}...")
@@ -615,7 +532,7 @@ def execute_scheduled_post(item):
     if success:
         log("✅ Пост опубликован!")
         if post_id:
-            time.sleep(5)
+            time.sleep(3)
             stats = fetch_post_stats(post_id, VK_GROUP_ID)
             if stats:
                 update_post_history(niche, topic, post_id, stats)
