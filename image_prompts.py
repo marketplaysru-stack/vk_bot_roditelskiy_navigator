@@ -1,136 +1,135 @@
 # ============================================================
-# ===== УЛУЧШЕННЫЕ НАСТРОЙКИ ГЕНЕРАЦИИ КАРТИНОК =====
+# ===== image_prompts.py – УНИВЕРСАЛЬНЫЙ ГЕНЕРАТОР ПРОМПТОВ =====
 # ============================================================
 
 import random
 
 # ============================================================
-# ===== БАЗОВЫЙ ШАБЛОН С ГИПЕРРЕАЛИСТИЧНЫМИ ЛИЦАМИ =====
+# ===== БАЗОВЫЕ СТИЛИ (выбирается случайно) =====
 # ============================================================
 
-IMAGE_PROMPT_TEMPLATE = (
-    "Hyperrealistic cinematic photograph, square 1:1 format, family scene: {topic}. "
-    "People: typical Moscow residents, European appearance, fair skin, light brown or blonde hair. "
-    "Faces hyperrealistic: natural skin texture, visible pores, fine wrinkles, individual eyelashes, expressive eyes with natural reflections, subtle facial expressions. "
-    "No cartoonishness, no grotesque, no distortions. "
-    "Natural skin, realistic eyes, genuine emotions (joy, tenderness, surprise, warmth). "
-    "Clothing modern, urban, suitable for Moscow: casual, stylish, comfortable. "
-    "Setting: Moscow — cozy courtyard with birch trees, modern apartment with large windows, or a sunny park with children's playground. "
-    "Photorealism, 8K, ultra-detailed, shallow depth of field (f/2.8), natural soft lighting, warm golden hour tones or soft overcast light. "
-    "No text, no inscriptions. "
-    "Professional photography style: Hasselblad H6D, 100mm lens, natural bokeh, film grain, fine textures."
-)
+STYLES = [
+    "абстрактная графика",
+    "минималистичная иконка",
+    "инфографика с элементами",
+    "архитектурная фотография",
+    "природный пейзаж",
+    "предметная съёмка",
+    "городской скетч",
+    "геометрический паттерн",
+    "технологичная иллюстрация",
+    "схематичное изображение",
+]
 
 # ============================================================
-# ===== ДОПОЛНИТЕЛЬНЫЕ ВАРИАНТЫ ДЛЯ РАЗНООБРАЗИЯ =====
+# ===== КОНТЕКСТНЫЕ ДОПОЛНЕНИЯ (зависят от темы) =====
 # ============================================================
 
-ANGLES = [
-    "medium close-up",
-    "extreme close-up on faces",
-    "wide shot with family",
-    "over-the-shoulder view",
-    "low angle looking up",
-    "eye-level perspective",
-    "profile view",
-    "three-quarter view"
-]
-
-LIGHTING_STYLES = [
-    "warm golden hour sunlight streaming through windows",
-    "soft overcast daylight with gentle shadows",
-    "dramatic cinematic lighting with high contrast",
-    "natural window light, soft and diffused",
-    "sunset glow with long shadows",
-    "indoor warm lamp light combined with cool daylight from window"
-]
-
-MOODS = [
-    "joyful, genuine laughter, happy family moment",
-    "tender, loving, warm embrace between parent and child",
-    "surprised, amazed, delighted expression",
-    "calm, peaceful, relaxed family time",
-    "playful, fun, energetic interaction",
-    "focused, attentive, engaged in activity"
-]
-
-BACKGROUNDS = [
-    "Moscow courtyard with birch trees and children's playground",
-    "bright modern apartment with panoramic windows",
-    "green park with benches and walking paths",
-    "cozy kitchen with family having breakfast",
-    "bookstore or library corner",
-    "snowy Moscow street with festive lights (winter)"
-]
-
-SUFFIX_AGNES = ""
-SUFFIX_GIGACHAT = ""
-SUFFIX_POLLINATIONS = " hyperrealistic faces, European, Moscow, photorealistic, 8k, detailed skin, natural light"
+def get_context_from_topic(topic):
+    """Извлекает ключевые слова из темы для подсказок."""
+    keywords = []
+    if "ребён" in topic or "дет" in topic:
+        keywords.append("детская тематика")
+    if "родител" in topic:
+        keywords.append("родители")
+    if "дом" in topic or "квартир" in topic:
+        keywords.append("интерьер")
+    if "стр" in topic or "строитель" in topic:
+        keywords.append("строительство")
+    if "технолог" in topic or "AI" in topic or "ИИ" in topic:
+        keywords.append("технологии")
+    if "финанс" in topic or "денег" in topic:
+        keywords.append("финансы")
+    if "здоров" in topic:
+        keywords.append("здоровье")
+    if "еда" in topic or "кулин" in topic:
+        keywords.append("еда")
+    if not keywords:
+        keywords.append("универсальная тема")
+    return keywords
 
 # ============================================================
-# ===== ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ РАЗНООБРАЗНОГО ПРОМПТА =====
+# ===== ОСНОВНАЯ ФУНКЦИЯ ГЕНЕРАЦИИ ПРОМПТА =====
 # ============================================================
 
 def build_image_prompt(topic):
-    angle = random.choice(ANGLES)
-    lighting = random.choice(LIGHTING_STYLES)
-    mood = random.choice(MOODS)
-    background = random.choice(BACKGROUNDS)
+    """
+    Генерирует уникальный промпт для каждого поста, избегая повторяющихся шаблонов.
+    """
+    style = random.choice(STYLES)
+    context = get_context_from_topic(topic)
+    context_str = ", ".join(context)
 
-    prompt = (
-        f"Hyperrealistic cinematic photograph, square 1:1 format, family scene related to: {topic}. "
-        f"{mood}. "
-        f"People: typical Moscow residents, European appearance, fair skin, light brown or blonde hair, realistic facial features. "
-        f"Faces hyperrealistic: natural skin texture, visible pores, fine wrinkles, individual eyelashes, "
-        f"expressive eyes with natural reflections, genuine emotions (joy, tenderness, surprise). "
-        f"No cartoonishness, no grotesque, no distortions. "
-        f"Natural skin, realistic eyes. "
-        f"Clothing modern, urban, suitable for Moscow: casual, stylish, comfortable. "
-        f"Setting: {background}. "
-        f"Camera angle: {angle}. Lighting: {lighting}. "
-        f"Photorealism, 8K, ultra-detailed, shallow depth of field (f/2.8), "
-        f"soft natural lighting, warm golden hour tones or soft overcast light. "
-        f"No text, no inscriptions. "
-        f"Professional photography style: Hasselblad H6D, 100mm lens, natural bokeh, film grain, fine textures."
+    # Базовый шаблон с явным запретом на повторяющиеся женские лица
+    base = (
+        f"Создай изображение для поста на тему: '{topic}'. "
+        f"Стиль: {style}. "
+        f"Учти контекст: {context_str}. "
+        "Изображение должно быть уникальным, не использовать распространённые стоковые клише. "
+        "Если на изображении присутствуют люди, они должны быть разнообразными по полу, возрасту и внешности, но лучше использовать беслюдные варианты: абстракцию, графику, иконки, предметы, архитектуру, природу. "
+        "Избегай повторяющихся женских лиц в каждой картинке. "
+        "Цветовая палитра: гармоничная, современная, подходящая для соцсетей. "
+        "Формат: квадратный (1:1). "
+        "Высокое качество, 8K, фотореализм или векторная графика – в зависимости от стиля. "
+        "Без текста и надписей."
     )
-    return prompt
+
+    # Добавляем случайную деталь для разнообразия
+    details = [
+        "с акцентом на текстуру",
+        "с мягким освещением",
+        "с геометрическими узорами",
+        "с контрастными цветами",
+        "с элементами минимализма",
+        "с динамичной композицией",
+        "с использованием негативного пространства",
+        "с необычным ракурсом",
+    ]
+    base += " " + random.choice(details)
+
+    # Иногда добавляем указание на время суток или погоду
+    if random.random() < 0.3:
+        weather = random.choice(["солнечный день", "сумерки", "дождь", "туман", "золотой час"])
+        base += f" Действие происходит в {weather}."
+
+    return base
 
 # ============================================================
-# ===== ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ (увеличены таймауты) =====
+# ===== ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ (можно менять) =====
 # ============================================================
 
 AGNES_IMAGE_PARAMS = {
     "model": "agnes-image-2.1-flash",
-    "size": "1024x1024",
+    "size": "1536x1536",
     "n": 1
 }
 
 GIGACHAT_IMAGE_PARAMS = {
     "model": "GigaChat-Image",
-    "size": "1024x1024",
+    "size": "1536x1536",
     "n": 1
 }
 
 POLLINATIONS_IMAGE_PARAMS = {
-    "width": 1024,
-    "height": 1024,
+    "width": 1536,
+    "height": 1536,
     "nologo": True
 }
 
-# Увеличенные таймауты (180 секунд)
 TIMEOUT_AGNES = 180
 TIMEOUT_GIGACHAT = 180
-TIMEOUT_POLLINATIONS = 60  # Pollinations обычно быстрее, но оставим запас
-
-# Настройки скачивания
+TIMEOUT_POLLINATIONS = 60
 DOWNLOAD_TIMEOUT = 90
 DOWNLOAD_RETRIES = 4
 DOWNLOAD_DELAY = 2
 DOWNLOAD_BACKOFF = 2
 
-# Порядок источников
 IMAGE_SOURCES = [
     "agnes",
     "gigachat",
     "pollinations"
 ]
+
+SUFFIX_AGNES = ""
+SUFFIX_GIGACHAT = ""
+SUFFIX_POLLINATIONS = " высокое качество, уникальный стиль, без штампов"
