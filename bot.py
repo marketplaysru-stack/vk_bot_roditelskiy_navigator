@@ -12,6 +12,7 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import random
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -58,9 +59,9 @@ except ValueError:
     log(f"❌ VK_GROUP_ID_PARENT должен быть числом, получено: {VK_GROUP_ID}")
     sys.exit(1)
 if not AGNES_API_KEY:
-    log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
+    log("⚠️ AGNES_API_KEY не задан (текст и картинки только через Pollinations)")
 
-log("🚀 Запуск родительского бота (таймаут 90 сек, гиперреалистичные лица)")
+log("🚀 Запуск родительского бота (исправленная генерация с таймаутами)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -159,12 +160,17 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (таймаут 90 сек, 3 попытки) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (с ThreadPoolExecutor и таймаутами) =====
 # ============================================================
 
 def generate_post_text_safe(topic):
-    """Возвращает текст поста или fallback. 3 попытки, таймаут 90 сек."""
+    """Возвращает текст поста или fallback. Использует ThreadPoolExecutor для таймаута."""
     log(f"🔤 Генерация текста для темы: {topic}")
+
+    if not AGNES_API_KEY:
+        log("   ❌ AGNES_API_KEY не задан, используем fallback")
+        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+
     system_prompt = (
         "Ты — эксперт в области воспитания детей, семейной психологии, образования и здорового развития. "
         "Напиши полезный, тёплый и поддерживающий пост для родителей по теме. "
@@ -182,33 +188,35 @@ def generate_post_text_safe(topic):
         "temperature": 0.85
     }
 
-    for attempt in range(3):
+    def _request():
+        log("   Отправка запроса к Agnes...")
+        response = requests.post(
+            "https://apihub.agnes-ai.com/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=(10, 90)  # 10 сек на соединение, 90 сек на чтение
+        )
+        log(f"   Получен ответ: статус {response.status_code}")
+        if response.status_code == 200:
+            result = response.json()
+            if "choices" in result and len(result["choices"]) > 0:
+                content = result["choices"][0]["message"]["content"]
+                if content:
+                    return content
+        raise Exception(f"Не удалось получить текст: статус {response.status_code}, ответ: {response.text[:100]}")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_request)
         try:
-            log(f"   Попытка {attempt+1}/3...")
-            response = requests.post(
-                "https://apihub.agnes-ai.com/v1/chat/completions",
-                headers=headers,
-                json=data,
-                timeout=90  # 90 секунд
-            )
-            if response.status_code == 200:
-                result = response.json()
-                if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0]["message"]["content"]
-                    if content:
-                        log(f"   Текст получен, длина {len(content)}")
-                        return content
-            log(f"   ❌ Попытка {attempt+1} не удалась (код {response.status_code})")
-        except requests.exceptions.Timeout:
-            log(f"   ❌ Таймаут на попытке {attempt+1}")
+            text = future.result(timeout=95)  # чуть больше таймаута запроса
+            log(f"   Текст получен, длина {len(text)}")
+            return text
+        except TimeoutError:
+            log("   ❌ Таймаут при генерации текста (более 95 сек)")
+            return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
         except Exception as e:
-            log(f"   ❌ Ошибка на попытке {attempt+1}: {e}")
-
-        if attempt < 2:
-            time.sleep(2)  # пауза между попытками
-
-    log("   ❌ Все 3 попытки не удались, используем fallback")
-    return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+            log(f"   ❌ Ошибка генерации текста: {e}")
+            return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
 
 # ============================================================
 # ===== МОДУЛЬ СТАТИСТИКИ =====
@@ -512,7 +520,7 @@ def execute_scheduled_post(item):
     topic = item["topic"]
     log(f"📢 Публикую пост: '{topic}' (родительский)")
 
-    log("🔤 Шаг 1: Генерация текста (90 сек, 3 попытки)...")
+    log("🔤 Шаг 1: Генерация текста...")
     post_text = generate_post_text_safe(topic)
     log(f"✅ Текст получен (или fallback), длина {len(post_text)}")
 
@@ -678,7 +686,7 @@ def get_updates(offset):
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот (таймаут 90 сек, гиперреалистичные лица) запущен")
+    log("🤖 Родительский бот (с исправленной генерацией) запущен")
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
     while True:
