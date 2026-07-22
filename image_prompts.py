@@ -8,7 +8,6 @@ import random
 # ===== БАЗОВЫЙ ШАБЛОН С ГИПЕРРЕАЛИСТИЧНЫМИ ЛИЦАМИ =====
 # ============================================================
 
-# Основной промпт с акцентом на фотореализм, свет, текстуры, эмоции
 IMAGE_PROMPT_TEMPLATE = (
     "Hyperrealistic cinematic photograph, square 1:1 format, family scene: {topic}. "
     "People: typical Moscow residents, European appearance, fair skin, light brown or blonde hair. "
@@ -26,7 +25,6 @@ IMAGE_PROMPT_TEMPLATE = (
 # ===== ДОПОЛНИТЕЛЬНЫЕ ВАРИАНТЫ ДЛЯ РАЗНООБРАЗИЯ =====
 # ============================================================
 
-# Варианты ракурсов (выбирается случайно)
 ANGLES = [
     "medium close-up",
     "extreme close-up on faces",
@@ -38,7 +36,6 @@ ANGLES = [
     "three-quarter view"
 ]
 
-# Варианты освещения
 LIGHTING_STYLES = [
     "warm golden hour sunlight streaming through windows",
     "soft overcast daylight with gentle shadows",
@@ -48,7 +45,6 @@ LIGHTING_STYLES = [
     "indoor warm lamp light combined with cool daylight from window"
 ]
 
-# Варианты настроения и эмоций
 MOODS = [
     "joyful, genuine laughter, happy family moment",
     "tender, loving, warm embrace between parent and child",
@@ -58,7 +54,6 @@ MOODS = [
     "focused, attentive, engaged in activity"
 ]
 
-# Варианты фонов
 BACKGROUNDS = [
     "Moscow courtyard with birch trees and children's playground",
     "bright modern apartment with panoramic windows",
@@ -68,7 +63,6 @@ BACKGROUNDS = [
     "snowy Moscow street with festive lights (winter)"
 ]
 
-# Суффиксы для каждого источника
 SUFFIX_AGNES = ""
 SUFFIX_GIGACHAT = ""
 SUFFIX_POLLINATIONS = " hyperrealistic faces, European, Moscow, photorealistic, 8k, detailed skin, natural light"
@@ -78,9 +72,6 @@ SUFFIX_POLLINATIONS = " hyperrealistic faces, European, Moscow, photorealistic, 
 # ============================================================
 
 def build_image_prompt(topic):
-    """
-    Генерирует промпт с случайными вариациями для разнообразия картинок.
-    """
     angle = random.choice(ANGLES)
     lighting = random.choice(LIGHTING_STYLES)
     mood = random.choice(MOODS)
@@ -105,7 +96,7 @@ def build_image_prompt(topic):
     return prompt
 
 # ============================================================
-# ===== ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ =====
+# ===== ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ (увеличены таймауты) =====
 # ============================================================
 
 AGNES_IMAGE_PARAMS = {
@@ -126,20 +117,20 @@ POLLINATIONS_IMAGE_PARAMS = {
     "nologo": True
 }
 
-# Порядок источников (можно менять местами)
+# Увеличенные таймауты (180 секунд)
+TIMEOUT_AGNES = 180
+TIMEOUT_GIGACHAT = 180
+TIMEOUT_POLLINATIONS = 60  # Pollinations обычно быстрее, но оставим запас
+
+# Настройки скачивания
+DOWNLOAD_TIMEOUT = 90
+DOWNLOAD_RETRIES = 4
+DOWNLOAD_DELAY = 2
+DOWNLOAD_BACKOFF = 2
+
+# Порядок источников
 IMAGE_SOURCES = [
     "agnes",
     "gigachat",
     "pollinations"
 ]
-
-# Таймауты для каждого источника (сек)
-TIMEOUT_AGNES = 120
-TIMEOUT_GIGACHAT = 120
-TIMEOUT_POLLINATIONS = 30
-
-# Настройки скачивания
-DOWNLOAD_TIMEOUT = 60
-DOWNLOAD_RETRIES = 3
-DOWNLOAD_DELAY = 2
-DOWNLOAD_BACKOFF = 2

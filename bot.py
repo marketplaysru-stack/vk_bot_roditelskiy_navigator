@@ -65,7 +65,7 @@ if not AGNES_API_KEY:
 if not GIGACHAT_API_KEY:
     log("⚠️ GIGACHAT_API_KEY не задан (будет пропущен)")
 
-log("🚀 Запуск родительского бота (Agnes → GigaChat → Pollinations → без фото)")
+log("🚀 Запуск родительского бота (увеличенные таймауты, расширенное логирование)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -233,12 +233,11 @@ def generate_post_text(topic):
         return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (используем промпт из image_prompts.py) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (увеличенные таймауты, расширенное логирование) =====
 # ============================================================
 
 def build_image_prompt(topic):
-    # Используем шаблон из отдельного файла
-    return img_cfg.IMAGE_PROMPT_TEMPLATE.format(topic=topic)
+    return img_cfg.build_image_prompt(topic)
 
 def generate_image_agnes(prompt):
     log("   🖼️ Попытка Agnes...")
@@ -253,20 +252,24 @@ def generate_image_agnes(prompt):
         "n": 1
     }
     def _do():
+        log("   Отправка запроса к Agnes (таймаут %d сек)" % img_cfg.TIMEOUT_AGNES)
         response = requests.post(
             "https://apihub.agnes-ai.com/v1/images/generations",
             headers=headers,
             json=data,
             timeout=img_cfg.TIMEOUT_AGNES
         )
+        log(f"   Ответ Agnes: код {response.status_code}")
         if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}")
+            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
         json_resp = response.json()
         if not json_resp.get("data") or len(json_resp["data"]) == 0:
             raise Exception("Empty data")
-        return json_resp["data"][0]["url"]
+        url = json_resp["data"][0]["url"]
+        log(f"   Agnes вернул URL: {url[:60]}...")
+        return url
     try:
-        url = retry_call(_do, max_retries=2, delay=3, backoff=2)
+        url = retry_call(_do, max_retries=3, delay=3, backoff=2)
         log("   ✅ Agnes успешно")
         return url
     except Exception as e:
@@ -289,6 +292,7 @@ def generate_image_gigachat(prompt):
         "n": 1
     }
     def _do():
+        log("   Отправка запроса к GigaChat (таймаут %d сек)" % img_cfg.TIMEOUT_GIGACHAT)
         response = requests.post(
             "https://gigachat.devices.sberbank.ru/api/v1/images/generations",
             headers=headers,
@@ -296,14 +300,17 @@ def generate_image_gigachat(prompt):
             timeout=img_cfg.TIMEOUT_GIGACHAT,
             verify=False
         )
+        log(f"   Ответ GigaChat: код {response.status_code}")
         if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}")
+            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
         json_resp = response.json()
         if not json_resp.get("data") or len(json_resp["data"]) == 0:
             raise Exception("Empty data")
-        return json_resp["data"][0]["url"]
+        url = json_resp["data"][0]["url"]
+        log(f"   GigaChat вернул URL: {url[:60]}...")
+        return url
     try:
-        url = retry_call(_do, max_retries=2, delay=3, backoff=2)
+        url = retry_call(_do, max_retries=3, delay=3, backoff=2)
         log("   ✅ GigaChat успешно")
         return url
     except Exception as e:
@@ -313,12 +320,23 @@ def generate_image_gigachat(prompt):
 def generate_image_pollinations(prompt):
     log("   🖼️ Попытка Pollinations...")
     try:
-        # Укорачиваем промпт для стабильности и добавляем суффикс из конфига
+        # Добавляем суффикс для качества
         short_prompt = prompt[:250] + img_cfg.SUFFIX_POLLINATIONS
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
-        log("   ✅ URL сформирован")
-        return url
+        log(f"   Pollinations URL сформирован: {url[:80]}...")
+        # Проверяем доступность (HEAD)
+        try:
+            head_resp = requests.head(url, timeout=10)
+            if head_resp.status_code == 200:
+                log("   ✅ Pollinations доступен (HEAD OK)")
+                return url
+            else:
+                log(f"   ⚠️ Pollinations HEAD вернул {head_resp.status_code}, но попробуем GET позже")
+                return url  # всё равно возвращаем URL, скачивание покажет ошибку
+        except Exception as e:
+            log(f"   ⚠️ Pollinations HEAD не удался: {e}, но всё равно попробуем")
+            return url
     except Exception as e:
         log(f"   ❌ Pollinations исключение: {e}")
         return None
@@ -326,30 +344,39 @@ def generate_image_pollinations(prompt):
 def generate_image(topic):
     log(f"🖼️ Генерация картинки для темы: {topic}")
     prompt = build_image_prompt(topic)
-    log(f"   Промпт: {prompt[:150]}...")
+    log(f"   Промпт: {prompt[:200]}...")
 
-    # Цепочка: Agnes → GigaChat → Pollinations
-    url = generate_image_agnes(prompt)
-    if url:
-        return url
-    url = generate_image_gigachat(prompt)
-    if url:
-        return url
-    url = generate_image_pollinations(prompt)
-    if url:
-        return url
-    log("❌ Все источники недоступны")
+    # Цепочка с увеличенными попытками
+    for attempt in range(2):  # две попытки всей цепочки
+        log(f"   Попытка {attempt+1}/2")
+        url = generate_image_agnes(prompt)
+        if url:
+            return url
+        url = generate_image_gigachat(prompt)
+        if url:
+            return url
+        url = generate_image_pollinations(prompt)
+        if url:
+            return url
+        if attempt == 0:
+            log("   ⚠️ Первая попытка не дала URL, повторяем через 5 сек...")
+            time.sleep(5)
+    log("❌ Все попытки и источники недоступны")
     return None
 
 def download_image(url):
     log(f"📥 Скачивание картинки: {url[:60]}...")
     def _do():
         response = requests.get(url, timeout=img_cfg.DOWNLOAD_TIMEOUT)
+        log(f"   Ответ на скачивание: код {response.status_code}, длина {len(response.content)}")
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
         content = response.content
-        if b"<html" in content[:100] or len(content) < 100:
-            raise Exception("Некорректный ответ")
+        # Проверка на HTML (Pollinations может вернуть ошибку в HTML)
+        if b"<html" in content[:200] or b"<!DOCTYPE" in content[:200]:
+            raise Exception("Получен HTML вместо изображения")
+        if len(content) < 100:
+            raise Exception("Слишком маленький ответ")
         return content
     try:
         content = retry_call(_do, max_retries=img_cfg.DOWNLOAD_RETRIES, delay=img_cfg.DOWNLOAD_DELAY, backoff=img_cfg.DOWNLOAD_BACKOFF)
@@ -539,7 +566,7 @@ def execute_scheduled_post(item):
     if success:
         log("✅ Пост успешно опубликован!")
         if post_id:
-            # можно добавить сбор статистики
+            # сбор статистики (опционально)
             pass
     else:
         log(f"❌ Ошибка публикации: {error}")
@@ -692,7 +719,7 @@ def add_test_post_if_empty():
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот (Agnes → GigaChat → Pollinations) запущен")
+    log("🤖 Родительский бот (увеличенные таймауты, расширенное логирование) запущен")
     add_test_post_if_empty()
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
