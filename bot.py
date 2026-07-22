@@ -42,7 +42,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
 VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
 VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
-GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")   # добавили
+GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
 PORT = int(os.getenv("PORT", 8081))
 
 if not BOT_TOKEN:
@@ -64,7 +64,7 @@ if not AGNES_API_KEY:
 if not GIGACHAT_API_KEY:
     log("⚠️ GIGACHAT_API_KEY не задан (будет пропущен)")
 
-log("🚀 Запуск родительского бота (GigaChat → Agnes → Pollinations, гиперреалистичные лица)")
+log("🚀 Запуск родительского бота (улучшенное качество картинок)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -163,7 +163,7 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (с таймаутом) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (без изменений) =====
 # ============================================================
 
 def generate_post_text_safe(topic):
@@ -282,7 +282,7 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (GigaChat → Agnes → Pollinations, гиперреалистичные лица) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (Agnes → GigaChat → Pollinations) с улучшенным промптом =====
 # ============================================================
 
 def build_image_prompt(topic):
@@ -294,48 +294,13 @@ def build_image_prompt(topic):
         "Clothing modern, urban. Action takes place in Moscow: cozy courtyards, parks, streets. "
         "Photorealism, 8K, ultra-detailed image, soft natural lighting, warm tones. "
         "No text or inscriptions. "
-        "Extreme detail, shallow depth of field, professional photography, Hasselblad H6D, 100mm lens, f/2.8."
+        "Extreme detail, shallow depth of field, professional photography, Hasselblad H6D, 100mm lens, f/2.8. "
+        "Natural skin, realistic eyes, subtle facial expressions, high resolution."
     )
     return base
 
-def generate_image_gigachat(prompt):
-    log("   🖼️ Попытка GigaChat (приоритет)...")
-    if not GIGACHAT_API_KEY:
-        log("   GIGACHAT_API_KEY не задан")
-        return None
-    headers = {
-        "Authorization": f"Bearer {GIGACHAT_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "GigaChat-Image",
-        "prompt": prompt,
-        "size": "1024x1024",
-        "n": 1
-    }
-    try:
-        # Игнорируем SSL ошибку (самоподписанный сертификат)
-        response = requests.post(
-            "https://gigachat.devices.sberbank.ru/api/v1/images/generations",
-            headers=headers,
-            json=data,
-            timeout=45,
-            verify=False  # отключаем проверку SSL
-        )
-        if response.status_code == 200:
-            json_resp = response.json()
-            if json_resp.get("data") and len(json_resp["data"]) > 0:
-                url = json_resp["data"][0]["url"]
-                log("   ✅ GigaChat успешно")
-                return url
-        log(f"   ❌ GigaChat ошибка: статус {response.status_code}")
-        return None
-    except Exception as e:
-        log(f"   ❌ GigaChat исключение: {e}")
-        return None
-
 def generate_image_agnes(prompt):
-    log("   🖼️ Попытка Agnes (резерв)...")
+    log("   🖼️ Попытка Agnes (приоритет)...")
     if not AGNES_API_KEY:
         log("   AGNES_API_KEY не задан")
         return None
@@ -351,26 +316,60 @@ def generate_image_agnes(prompt):
             "https://apihub.agnes-ai.com/v1/images/generations",
             headers=headers,
             json=data,
-            timeout=45
+            timeout=60
         )
-        if response.status_code != 200:
-            log(f"   ❌ HTTP {response.status_code}")
-            return None
-        json_resp = response.json()
-        if json_resp.get("data") and len(json_resp["data"]) > 0:
-            url = json_resp["data"][0]["url"]
-            log("   ✅ Agnes успешно")
-            return url
+        if response.status_code == 200:
+            json_resp = response.json()
+            if json_resp.get("data") and len(json_resp["data"]) > 0:
+                url = json_resp["data"][0]["url"]
+                log("   ✅ Agnes успешно")
+                return url
+        log(f"   ❌ Agnes ошибка: {response.status_code}")
         return None
     except Exception as e:
-        log(f"   ❌ Agnes ошибка: {e}")
+        log(f"   ❌ Agnes исключение: {e}")
+        return None
+
+def generate_image_gigachat(prompt):
+    log("   🖼️ Попытка GigaChat (резерв)...")
+    if not GIGACHAT_API_KEY:
+        log("   GIGACHAT_API_KEY не задан")
+        return None
+    headers = {
+        "Authorization": f"Bearer {GIGACHAT_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "GigaChat-Image",
+        "prompt": prompt,
+        "size": "1024x1024",
+        "n": 1
+    }
+    try:
+        response = requests.post(
+            "https://gigachat.devices.sberbank.ru/api/v1/images/generations",
+            headers=headers,
+            json=data,
+            timeout=60,
+            verify=False
+        )
+        if response.status_code == 200:
+            json_resp = response.json()
+            if json_resp.get("data") and len(json_resp["data"]) > 0:
+                url = json_resp["data"][0]["url"]
+                log("   ✅ GigaChat успешно")
+                return url
+        log(f"   ❌ GigaChat ошибка: {response.status_code}")
+        return None
+    except Exception as e:
+        log(f"   ❌ GigaChat исключение: {e}")
         return None
 
 def generate_image_pollinations(prompt):
     log("   🖼️ Попытка Pollinations (последний резерв)...")
     try:
-        short_prompt = prompt[:200] + " hyperrealistic faces, European, Moscow, photorealistic, 8k, detailed skin, natural"
-        prompt_encoded = urllib.parse.quote(short_prompt)
+        # Не укорачиваем промпт, чтобы сохранить качество
+        prompt_encoded = urllib.parse.quote(prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
         log("   ✅ URL сформирован")
         return url
@@ -383,11 +382,10 @@ def generate_image(topic):
     prompt = build_image_prompt(topic)
     log(f"   Промпт: {prompt[:150]}...")
 
-    # Приоритет: GigaChat → Agnes → Pollinations
-    url = generate_image_gigachat(prompt)
+    url = generate_image_agnes(prompt)
     if url:
         return url
-    url = generate_image_agnes(prompt)
+    url = generate_image_gigachat(prompt)
     if url:
         return url
     url = generate_image_pollinations(prompt)
@@ -399,7 +397,7 @@ def generate_image(topic):
 def download_image(url):
     log(f"📥 Скачивание картинки: {url[:60]}...")
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, timeout=60)
         if response.status_code == 200:
             content = response.content
             if b"<html" not in content[:100] and len(content) > 100:
@@ -411,7 +409,7 @@ def download_image(url):
         log(f"   ❌ Исключение при скачивании: {e}")
         return None
 
-# ===== ПУБЛИКАЦИЯ В VK =====
+# ===== ПУБЛИКАЦИЯ В VK (без изменений) =====
 def vk_api_request(method, params, token, retries=2):
     base_url = "https://api.vk.com/method/"
     params = params.copy()
@@ -568,7 +566,7 @@ def execute_scheduled_post(item):
     post_text = generate_post_text_safe(topic)
     log(f"✅ Текст получен (или fallback), длина {len(post_text)}")
 
-    log("🖼️ Шаг 2: Генерация картинки (GigaChat → Agnes → Pollinations)...")
+    log("🖼️ Шаг 2: Генерация картинки (улучшенное качество)...")
     image_url = generate_image(topic)
     image_bytes = None
     if image_url:
@@ -730,7 +728,7 @@ def get_updates(offset):
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот (GigaChat → Agnes → Pollinations) запущен")
+    log("🤖 Родительский бот (улучшенное качество картинок) запущен")
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
     while True:
