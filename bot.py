@@ -11,7 +11,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import random
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -41,6 +40,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
 VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
 VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
+GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
 PORT = int(os.getenv("PORT", 8081))
 
 if not BOT_TOKEN:
@@ -58,9 +58,11 @@ except ValueError:
     log(f"❌ VK_GROUP_ID_PARENT должен быть числом, получено: {VK_GROUP_ID}")
     sys.exit(1)
 if not AGNES_API_KEY:
-    log("⚠️ AGNES_API_KEY не задан (картинки через Pollinations)")
+    log("⚠️ AGNES_API_KEY не задан (текст и картинки через резерв)")
+if not GIGACHAT_API_KEY:
+    log("⚠️ GIGACHAT_API_KEY не задан (будет пропущен)")
 
-log("🚀 Запуск родительского бота (стабильная версия, гиперреалистичные лица)")
+log("🚀 Запуск родительского бота (Agnes → GigaChat → Pollinations → без фото)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -188,6 +190,10 @@ def save_schedule(schedule):
 
 def generate_post_text(topic):
     log(f"🔤 Генерация текста для темы: {topic}")
+    if not AGNES_API_KEY:
+        log("   ⚠️ AGNES_API_KEY не задан, используем fallback")
+        return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+
     system_prompt = (
         "Ты — эксперт в области воспитания детей, семейной психологии, образования и здорового развития. "
         "Напиши полезный, тёплый и поддерживающий пост для родителей по теме. "
@@ -216,16 +222,15 @@ def generate_post_text(topic):
         result = response.json()
         return result["choices"][0]["message"]["content"]
     try:
-        text = retry_call(_do, max_retries=3, delay=2, backoff=2)
+        text = retry_call(_do, max_retries=2, delay=2, backoff=2)
         log(f"   Текст получен, длина {len(text)}")
         return text
     except Exception as e:
         log(f"   ❌ Генерация текста провалилась: {e}")
-        # fallback
         return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (с гиперреалистичными лицами) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (Agnes → GigaChat → Pollinations → None) =====
 # ============================================================
 
 def build_image_prompt(topic):
@@ -241,21 +246,8 @@ def build_image_prompt(topic):
     )
     return base
 
-def generate_image_pollinations(prompt):
-    log("   🖼️ Pollinations...")
-    try:
-        # Укорачиваем до 250 символов, чтобы избежать ошибок
-        short_prompt = prompt[:250] + " hyperrealistic faces, European, Moscow, photorealistic, 8k"
-        prompt_encoded = urllib.parse.quote(short_prompt)
-        url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
-        log("   ✅ URL сформирован")
-        return url
-    except Exception as e:
-        log(f"   ❌ Pollinations исключение: {e}")
-        return None
-
 def generate_image_agnes(prompt):
-    log("   🖼️ Agnes (резерв)...")
+    log("   🖼️ Попытка Agnes...")
     if not AGNES_API_KEY:
         log("   AGNES_API_KEY не задан")
         return None
@@ -287,16 +279,70 @@ def generate_image_agnes(prompt):
         log(f"   ❌ Agnes окончательно: {e}")
         return None
 
+def generate_image_gigachat(prompt):
+    log("   🖼️ Попытка GigaChat...")
+    if not GIGACHAT_API_KEY:
+        log("   GIGACHAT_API_KEY не задан")
+        return None
+    headers = {
+        "Authorization": f"Bearer {GIGACHAT_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "GigaChat-Image",
+        "prompt": prompt,
+        "size": "1024x1024",
+        "n": 1
+    }
+    def _do():
+        # Игнорируем SSL ошибку
+        response = requests.post(
+            "https://gigachat.devices.sberbank.ru/api/v1/images/generations",
+            headers=headers,
+            json=data,
+            timeout=120,
+            verify=False
+        )
+        if response.status_code != 200:
+            raise Exception(f"HTTP {response.status_code}")
+        json_resp = response.json()
+        if not json_resp.get("data") or len(json_resp["data"]) == 0:
+            raise Exception("Empty data")
+        return json_resp["data"][0]["url"]
+    try:
+        url = retry_call(_do, max_retries=2, delay=3, backoff=2)
+        log("   ✅ GigaChat успешно")
+        return url
+    except Exception as e:
+        log(f"   ❌ GigaChat окончательно: {e}")
+        return None
+
+def generate_image_pollinations(prompt):
+    log("   🖼️ Попытка Pollinations...")
+    try:
+        # Укорачиваем для стабильности
+        short_prompt = prompt[:250] + " hyperrealistic faces, European, Moscow, photorealistic, 8k"
+        prompt_encoded = urllib.parse.quote(short_prompt)
+        url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
+        log("   ✅ URL сформирован")
+        return url
+    except Exception as e:
+        log(f"   ❌ Pollinations исключение: {e}")
+        return None
+
 def generate_image(topic):
     log(f"🖼️ Генерация картинки для темы: {topic}")
     prompt = build_image_prompt(topic)
     log(f"   Промпт: {prompt[:150]}...")
 
-    # Приоритет: Pollinations (быстро, стабильно), затем Agnes
-    url = generate_image_pollinations(prompt)
+    # Цепочка: Agnes → GigaChat → Pollinations
+    url = generate_image_agnes(prompt)
     if url:
         return url
-    url = generate_image_agnes(prompt)
+    url = generate_image_gigachat(prompt)
+    if url:
+        return url
+    url = generate_image_pollinations(prompt)
     if url:
         return url
     log("❌ Все источники недоступны")
@@ -468,6 +514,7 @@ def post_to_vk(image_bytes, text):
 # ===== ВЫПОЛНЕНИЕ ПОСТА =====
 def execute_scheduled_post(item):
     if item.get("niche") != "родительский":
+        log(f"⏭️ Пропускаем задание для другой ниши: {item.get('niche')}")
         return
 
     niche = "родительский"
@@ -481,7 +528,7 @@ def execute_scheduled_post(item):
         return
     log(f"✅ Текст получен, длина {len(post_text)}")
 
-    log("🖼️ Шаг 2: Генерация картинки...")
+    log("🖼️ Шаг 2: Генерация картинки (Agnes → GigaChat → Pollinations)...")
     image_url = generate_image(topic)
     image_bytes = None
     if image_url:
@@ -499,7 +546,7 @@ def execute_scheduled_post(item):
     if success:
         log("✅ Пост успешно опубликован!")
         if post_id:
-            # сбор статистики (опционально)
+            # Можно добавить сбор статистики здесь
             pass
     else:
         log(f"❌ Ошибка публикации: {error}")
@@ -526,7 +573,7 @@ def scheduler_loop():
             traceback.print_exc(file=sys.stdout)
         time.sleep(30)
 
-# ===== ОБРАБОТЧИКИ КОМАНД (с /clear, /stats и /run_now) =====
+# ===== ОБРАБОТЧИКИ КОМАНД =====
 def process_message(message):
     chat_id = message["chat"]["id"]
     text = message.get("text", "").strip()
@@ -535,28 +582,30 @@ def process_message(message):
     if text.startswith("/start"):
         send_message(chat_id,
             "👋 Родительский бот.\n"
-            "/post_in тема минуты\n"
-            "/run_now тема\n"
-            "/list\n/debug\n/clear\n/stats"
+            "/post_in тема минуты — добавить пост через N минут\n"
+            "/run_now тема — опубликовать прямо сейчас\n"
+            "/list — показать все задания\n"
+            "/debug — показать файл расписания\n"
+            "/clear — удалить все задания\n"
+            "/stats — показать статистику (упрощённо)"
         )
         return
 
     if text.startswith("/clear"):
         save_schedule([])
-        send_message(chat_id, "✅ Расписание очищено.")
+        send_message(chat_id, "✅ Все задания удалены.")
         return
 
     if text.startswith("/stats"):
-        # упрощённая статистика (можно расширить при желании)
-        send_message(chat_id, "📊 Статистика пока не собирается.")
+        send_message(chat_id, "📊 Статистика пока не собирается в этом боте.")
         return
 
     if text.startswith("/run_now"):
         topic = text.replace("/run_now", "").strip()
         if not topic:
-            send_message(chat_id, "❌ Укажи тему")
+            send_message(chat_id, "❌ Укажи тему поста")
             return
-        send_message(chat_id, f"⏳ Публикую...")
+        send_message(chat_id, f"⏳ Начинаю публикацию: '{topic}'...")
         def publish():
             item = {"niche": "родительский", "topic": topic, "time": datetime.now().strftime("%Y-%m-%d %H:%M")}
             execute_scheduled_post(item)
@@ -567,12 +616,12 @@ def process_message(message):
         parts = text.replace("/post_in", "").strip()
         match = re.search(r'(\d+)$', parts)
         if not match:
-            send_message(chat_id, "❌ Укажи минуты")
+            send_message(chat_id, "❌ Укажи минуты (число в конце)")
             return
         minutes = int(match.group(1))
         topic = parts[:match.start()].strip()
         if not topic:
-            send_message(chat_id, "❌ Укажи тему")
+            send_message(chat_id, "❌ Укажи тему поста")
             return
         publish_time = datetime.now() + timedelta(minutes=minutes)
         full_time = publish_time.strftime("%Y-%m-%d %H:%M")
@@ -580,13 +629,13 @@ def process_message(message):
         new_id = str(int(time.time()))
         schedule.append({"id": new_id, "niche": "родительский", "topic": topic, "time": full_time, "done": False})
         save_schedule(schedule)
-        send_message(chat_id, f"✅ Пост на {full_time}")
+        send_message(chat_id, f"✅ Пост добавлен: '{topic}' в {full_time}")
         return
 
     if text.startswith("/list"):
         schedule = load_schedule()
         if not schedule:
-            send_message(chat_id, "📭 Нет постов")
+            send_message(chat_id, "📭 Нет запланированных постов")
         else:
             lines = []
             for item in schedule:
@@ -599,7 +648,8 @@ def process_message(message):
         try:
             if os.path.exists(SCHEDULE_FILE):
                 with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
-                    send_message(chat_id, f"📄 {f.read()[:500]}")
+                    content = f.read()
+                    send_message(chat_id, f"📄 Содержимое schedule.json:\n{content[:500]}")
             else:
                 send_message(chat_id, "❌ Файл не найден")
         except Exception as e:
@@ -649,8 +699,8 @@ def add_test_post_if_empty():
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот (стабильная версия) запущен")
-    add_test_post_if_empty()  # добавим тестовый пост, если расписание пустое
+    log("🤖 Родительский бот (Agnes → GigaChat → Pollinations) запущен")
+    add_test_post_if_empty()
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
     while True:
