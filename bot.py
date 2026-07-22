@@ -42,6 +42,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
 VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
 VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
+GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")   # добавили
 PORT = int(os.getenv("PORT", 8081))
 
 if not BOT_TOKEN:
@@ -59,9 +60,11 @@ except ValueError:
     log(f"❌ VK_GROUP_ID_PARENT должен быть числом, получено: {VK_GROUP_ID}")
     sys.exit(1)
 if not AGNES_API_KEY:
-    log("⚠️ AGNES_API_KEY не задан (текст и картинки только через Pollinations)")
+    log("⚠️ AGNES_API_KEY не задан (картинки через GigaChat/Pollinations)")
+if not GIGACHAT_API_KEY:
+    log("⚠️ GIGACHAT_API_KEY не задан (будет пропущен)")
 
-log("🚀 Запуск родительского бота (исправленная генерация с таймаутами)")
+log("🚀 Запуск родительского бота (GigaChat → Agnes → Pollinations, гиперреалистичные лица)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -160,11 +163,10 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (с ThreadPoolExecutor и таймаутами) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (с таймаутом) =====
 # ============================================================
 
 def generate_post_text_safe(topic):
-    """Возвращает текст поста или fallback. Использует ThreadPoolExecutor для таймаута."""
     log(f"🔤 Генерация текста для темы: {topic}")
 
     if not AGNES_API_KEY:
@@ -189,30 +191,28 @@ def generate_post_text_safe(topic):
     }
 
     def _request():
-        log("   Отправка запроса к Agnes...")
         response = requests.post(
             "https://apihub.agnes-ai.com/v1/chat/completions",
             headers=headers,
             json=data,
-            timeout=(10, 90)  # 10 сек на соединение, 90 сек на чтение
+            timeout=(10, 60)
         )
-        log(f"   Получен ответ: статус {response.status_code}")
         if response.status_code == 200:
             result = response.json()
             if "choices" in result and len(result["choices"]) > 0:
                 content = result["choices"][0]["message"]["content"]
                 if content:
                     return content
-        raise Exception(f"Не удалось получить текст: статус {response.status_code}, ответ: {response.text[:100]}")
+        raise Exception(f"Не удалось получить текст: статус {response.status_code}")
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(_request)
         try:
-            text = future.result(timeout=95)  # чуть больше таймаута запроса
+            text = future.result(timeout=65)
             log(f"   Текст получен, длина {len(text)}")
             return text
         except TimeoutError:
-            log("   ❌ Таймаут при генерации текста (более 95 сек)")
+            log("   ❌ Таймаут при генерации текста (более 65 сек)")
             return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
         except Exception as e:
             log(f"   ❌ Ошибка генерации текста: {e}")
@@ -282,35 +282,62 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (гиперреалистичные лица) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (GigaChat → Agnes → Pollinations, гиперреалистичные лица) =====
 # ============================================================
 
 def build_image_prompt(topic):
     base = (
-        f"Семья, родители и дети, счастливые моменты, уют, тепло, связанные с темой: {topic}. "
-        "Люди должны выглядеть как типичные москвичи: европеоидная внешность, светлая кожа, русые или светлые волосы, европейские черты лица. "
-        "Лица должны быть гиперреалистичными, с естественной текстурой кожи, видимыми порами, ресницами, бровями, выразительными глазами, естественными пропорциями. "
-        "Без мультяшности, без гротеска, без искажений. "
-        "Одежда современная, городская. Действие в Москве: уютные дворы, парки, улицы. "
-        "Фотореализм, 8K, сверхдетализированное изображение, мягкое естественное освещение, тёплые тона. Без текста и надписей."
+        f"Hyperrealistic cinematic photograph, square 1:1 format, family, parents and children, happy moments, warmth, related to topic: {topic}. "
+        "People should look like typical Moscow residents: European appearance, fair skin, light brown or blonde hair, European facial features. "
+        "Faces must be hyperrealistic, with natural skin texture, visible pores, eyelashes, eyebrows, expressive eyes, natural proportions. "
+        "No cartoonishness, no grotesque, no distortions. "
+        "Clothing modern, urban. Action takes place in Moscow: cozy courtyards, parks, streets. "
+        "Photorealism, 8K, ultra-detailed image, soft natural lighting, warm tones. "
+        "No text or inscriptions. "
+        "Extreme detail, shallow depth of field, professional photography, Hasselblad H6D, 100mm lens, f/2.8."
     )
     return base
 
-def generate_image_pollinations(prompt):
-    log("   🖼️ Pollinations...")
+def generate_image_gigachat(prompt):
+    log("   🖼️ Попытка GigaChat (приоритет)...")
+    if not GIGACHAT_API_KEY:
+        log("   GIGACHAT_API_KEY не задан")
+        return None
+    headers = {
+        "Authorization": f"Bearer {GIGACHAT_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "GigaChat-Image",
+        "prompt": prompt,
+        "size": "1024x1024",
+        "n": 1
+    }
     try:
-        short_prompt = prompt[:200] + " hyperrealistic faces, European, Moscow, photorealistic, 8k, detailed skin, natural"
-        prompt_encoded = urllib.parse.quote(short_prompt)
-        url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
-        log("   ✅ URL сформирован")
-        return url
+        # Игнорируем SSL ошибку (самоподписанный сертификат)
+        response = requests.post(
+            "https://gigachat.devices.sberbank.ru/api/v1/images/generations",
+            headers=headers,
+            json=data,
+            timeout=45,
+            verify=False  # отключаем проверку SSL
+        )
+        if response.status_code == 200:
+            json_resp = response.json()
+            if json_resp.get("data") and len(json_resp["data"]) > 0:
+                url = json_resp["data"][0]["url"]
+                log("   ✅ GigaChat успешно")
+                return url
+        log(f"   ❌ GigaChat ошибка: статус {response.status_code}")
+        return None
     except Exception as e:
-        log(f"   ❌ Pollinations исключение: {e}")
+        log(f"   ❌ GigaChat исключение: {e}")
         return None
 
 def generate_image_agnes(prompt):
-    log("   🖼️ Agnes (резерв)...")
+    log("   🖼️ Попытка Agnes (резерв)...")
     if not AGNES_API_KEY:
+        log("   AGNES_API_KEY не задан")
         return None
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
     data = {
@@ -324,7 +351,7 @@ def generate_image_agnes(prompt):
             "https://apihub.agnes-ai.com/v1/images/generations",
             headers=headers,
             json=data,
-            timeout=30
+            timeout=45
         )
         if response.status_code != 200:
             log(f"   ❌ HTTP {response.status_code}")
@@ -339,14 +366,31 @@ def generate_image_agnes(prompt):
         log(f"   ❌ Agnes ошибка: {e}")
         return None
 
+def generate_image_pollinations(prompt):
+    log("   🖼️ Попытка Pollinations (последний резерв)...")
+    try:
+        short_prompt = prompt[:200] + " hyperrealistic faces, European, Moscow, photorealistic, 8k, detailed skin, natural"
+        prompt_encoded = urllib.parse.quote(short_prompt)
+        url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
+        log("   ✅ URL сформирован")
+        return url
+    except Exception as e:
+        log(f"   ❌ Pollinations исключение: {e}")
+        return None
+
 def generate_image(topic):
     log(f"🖼️ Генерация картинки для темы: {topic}")
     prompt = build_image_prompt(topic)
     log(f"   Промпт: {prompt[:150]}...")
-    url = generate_image_pollinations(prompt)
+
+    # Приоритет: GigaChat → Agnes → Pollinations
+    url = generate_image_gigachat(prompt)
     if url:
         return url
     url = generate_image_agnes(prompt)
+    if url:
+        return url
+    url = generate_image_pollinations(prompt)
     if url:
         return url
     log("❌ Все источники недоступны")
@@ -524,7 +568,7 @@ def execute_scheduled_post(item):
     post_text = generate_post_text_safe(topic)
     log(f"✅ Текст получен (или fallback), длина {len(post_text)}")
 
-    log("🖼️ Шаг 2: Генерация картинки с гиперреалистичными лицами...")
+    log("🖼️ Шаг 2: Генерация картинки (GigaChat → Agnes → Pollinations)...")
     image_url = generate_image(topic)
     image_bytes = None
     if image_url:
@@ -686,7 +730,7 @@ def get_updates(offset):
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот (с исправленной генерацией) запущен")
+    log("🤖 Родительский бот (GigaChat → Agnes → Pollinations) запущен")
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
     while True:
