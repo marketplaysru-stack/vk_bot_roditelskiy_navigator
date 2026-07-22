@@ -10,14 +10,16 @@ logger = logging.getLogger(__name__)
 # ===== КОНФИГУРАЦИЯ =====
 # Список групп ВК (с минусом) и соответствующие ниши
 VK_FEED_SOURCES = {
+    "родительский": [
+        -35422673,   # группа 1
+        -55387604,   # группа 2
+        -35459468,   # группа 3 (добавлена)
+    ],
     "строительный": [
-        -12345678,   # ЗАМЕНИТЕ НА РЕАЛЬНЫЙ ID ГРУППЫ
+        # здесь можно добавить ID строительных групп
     ],
     "ai": [
-        -98765432,
-    ],
-    "родительский": [
-        -11111111,
+        # здесь можно добавить ID AI-групп
     ],
 }
 
@@ -150,15 +152,13 @@ def fetch_and_generate_topics_from_vk(limit=3):
                     # Рерайт через Agnes
                     rewritten = rewrite_with_agnes(text, niche)
                     if rewritten:
-                        # Используем переработанный текст как тему
-                        # Обрезаем до разумной длины, чтобы использовать как тему для генератора
                         topic = rewritten[:200] + ("..." if len(rewritten) > 200 else "")
                         source_url = f"https://vk.com/wall{group_id}_{post['id']}"
                         new_topics.append({
                             "niche": niche,
                             "topic": topic,
                             "source": source_url,
-                            "rewritten": rewritten,   # можно сохранить для дальнейшего использования
+                            "rewritten": rewritten,
                         })
                         new_ids.add(post_id)
                     else:
