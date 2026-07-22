@@ -12,7 +12,6 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import random
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -61,7 +60,7 @@ except ValueError:
 if not AGNES_API_KEY:
     log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск родительского бота (гиперреалистичные лица, европейская внешность)")
+log("🚀 Запуск родительского бота (таймаут 90 сек, гиперреалистичные лица)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -160,11 +159,11 @@ def save_schedule(schedule):
         log(f"⚠️ Ошибка сохранения: {e}")
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (с таймаутом и гарантированным fallback) =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (таймаут 90 сек, 3 попытки) =====
 # ============================================================
 
 def generate_post_text_safe(topic):
-    """Возвращает текст поста или fallback. Никогда не зависает."""
+    """Возвращает текст поста или fallback. 3 попытки, таймаут 90 сек."""
     log(f"🔤 Генерация текста для темы: {topic}")
     system_prompt = (
         "Ты — эксперт в области воспитания детей, семейной психологии, образования и здорового развития. "
@@ -183,34 +182,33 @@ def generate_post_text_safe(topic):
         "temperature": 0.85
     }
 
-    def _request():
-        response = requests.post(
-            "https://apihub.agnes-ai.com/v1/chat/completions",
-            headers=headers,
-            json=data,
-            timeout=30
-        )
-        if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}")
-        result = response.json()
-        if "choices" in result and len(result["choices"]) > 0:
-            content = result["choices"][0]["message"]["content"]
-            if content:
-                return content
-        raise Exception("Пустой ответ")
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_request)
+    for attempt in range(3):
         try:
-            text = future.result(timeout=35)
-            log(f"   Текст получен, длина {len(text)}")
-            return text
-        except TimeoutError:
-            log("   ❌ Таймаут генерации текста (более 35 сек), используем fallback")
-            return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+            log(f"   Попытка {attempt+1}/3...")
+            response = requests.post(
+                "https://apihub.agnes-ai.com/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=90  # 90 секунд
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if "choices" in result and len(result["choices"]) > 0:
+                    content = result["choices"][0]["message"]["content"]
+                    if content:
+                        log(f"   Текст получен, длина {len(content)}")
+                        return content
+            log(f"   ❌ Попытка {attempt+1} не удалась (код {response.status_code})")
+        except requests.exceptions.Timeout:
+            log(f"   ❌ Таймаут на попытке {attempt+1}")
         except Exception as e:
-            log(f"   ❌ Ошибка генерации текста: {e}, используем fallback")
-            return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
+            log(f"   ❌ Ошибка на попытке {attempt+1}: {e}")
+
+        if attempt < 2:
+            time.sleep(2)  # пауза между попытками
+
+    log("   ❌ Все 3 попытки не удались, используем fallback")
+    return f"❓ {topic}\n\nПоделитесь своим опытом в комментариях! 👇\n\n#родительство #дети #семья #воспитание #советы"
 
 # ============================================================
 # ===== МОДУЛЬ СТАТИСТИКИ =====
@@ -276,7 +274,7 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (гиперреалистичные лица, европейская внешность) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (гиперреалистичные лица) =====
 # ============================================================
 
 def build_image_prompt(topic):
@@ -293,7 +291,6 @@ def build_image_prompt(topic):
 def generate_image_pollinations(prompt):
     log("   🖼️ Pollinations...")
     try:
-        # Укорачиваем промпт, но добавляем ключевые слова для гиперреализма лиц
         short_prompt = prompt[:200] + " hyperrealistic faces, European, Moscow, photorealistic, 8k, detailed skin, natural"
         prompt_encoded = urllib.parse.quote(short_prompt)
         url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1024&height=1024&nologo=true"
@@ -515,7 +512,7 @@ def execute_scheduled_post(item):
     topic = item["topic"]
     log(f"📢 Публикую пост: '{topic}' (родительский)")
 
-    log("🔤 Шаг 1: Генерация текста...")
+    log("🔤 Шаг 1: Генерация текста (90 сек, 3 попытки)...")
     post_text = generate_post_text_safe(topic)
     log(f"✅ Текст получен (или fallback), длина {len(post_text)}")
 
@@ -681,7 +678,7 @@ def get_updates(offset):
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот (гиперреалистичные лица) запущен")
+    log("🤖 Родительский бот (таймаут 90 сек, гиперреалистичные лица) запущен")
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
     while True:
