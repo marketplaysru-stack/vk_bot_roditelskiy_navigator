@@ -11,6 +11,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import random
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -36,11 +37,10 @@ def log(msg):
     logging.info(msg)
 
 # ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
-BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
-VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
-VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
+BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")                # Токен Telegram-бота для родительского (@DmitrySergeevich_bot)
+VK_TOKEN = os.getenv("VK_TOKEN_PARENT")               # Токен родительской группы (пользовательский)
+VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")         # -197687739
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
-GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
 PORT = int(os.getenv("PORT", 8081))
 
 if not BOT_TOKEN:
@@ -58,11 +58,9 @@ except ValueError:
     log(f"❌ VK_GROUP_ID_PARENT должен быть числом, получено: {VK_GROUP_ID}")
     sys.exit(1)
 if not AGNES_API_KEY:
-    log("⚠️ AGNES_API_KEY не задан (картинки через Pollinations)")
-if not GIGACHAT_API_KEY:
-    log("⚠️ GIGACHAT_API_KEY не задан (GigaChat не будет использоваться)")
+    log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск бота для Родительского навигатора (с аналитикой и самообучением)")
+log("🚀 Запуск бота для Родительского навигатора (70/20/10, эмодзи, хештеги, динамические картинки)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -184,15 +182,26 @@ def save_schedule(schedule):
     except Exception as e:
         log(f"⚠️ Ошибка сохранения: {e}")
 
-# ===== ГЕНЕРАЦИЯ ТЕКСТА =====
+# ============================================================
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (С ЭМОДЗИ, ХЕШТЕГАМИ, СТРУКТУРА 70/20/10) =====
+# ============================================================
+
 def generate_post_text(topic):
     log(f"🔤 Генерация текста для темы: {topic}")
     system_prompt = (
-        "Ты — профессиональный SMM-менеджер и копирайтер. "
-        "Напиши яркий, вовлекающий пост для ВКонтакте по заданной теме. "
-        "Пост должен быть продающим, полезным и побуждать к действию. "
-        "Используй структуру: цепляющий заголовок (до 10 слов) → проблема аудитории → решение → практическая польза → призыв к действию. "
-        "Добавь эмодзи, разбей на короткие абзацы. В конце добавь 5 хештегов. Пиши человечно, без канцелярита."
+        "Ты — эксперт в области воспитания детей, семейной психологии, образования и здорового развития. "
+        "Твоя задача — писать полезные, тёплые и поддерживающие посты для родителей. "
+        "Ты делишься советами, разбираешь типичные ситуации, даёшь рекомендации по общению с детьми, здоровью, досугу, обучению. "
+        "Ты не продаёшь услуги, а помогаешь родителям чувствовать себя увереннее и счастливее. "
+        "Формат поста: дружелюбный, понимающий, без осуждения. "
+        "Пост должен быть структурирован по модели 70/20/10:\n"
+        "   — 70%: полезный экспертный контент (советы, упражнения, рецепты, идеи для игр, подходы к воспитанию).\n"
+        "   — 20%: обсуждение, примеры из жизни, ссылки на исследования или личный опыт.\n"
+        "   — 10%: вовлекающий элемент — вопрос к аудитории, чек-лист, задание для родителей, призыв поделиться опытом.\n"
+        "Используй эмодзи для разделения смысловых блоков (например, 👶, 👨‍👩‍👧‍👦, 💡, ❤️, 🌱, 📚, 🎨, 🧸, 🏃‍♂️, 🥗, 😊, ✨, 🕊️, 💬).\n"
+        "Разделяй блоки с помощью символов-разделителей (например, '---' или '✦').\n"
+        "В конце поста обязательно добавь 5–7 хештегов на русском языке, соответствующих теме (например, #родительство #дети #воспитание #семья #советыродителям #материнство #отцовство).\n"
+        "Пост должен быть визуально привлекательным, легко читаемым, с короткими абзацами."
     )
     user_prompt = f"Тема: {topic}"
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
@@ -245,17 +254,13 @@ def save_stats(stats):
         log(f"⚠️ Ошибка сохранения статистики: {e}")
 
 def fetch_post_stats(post_id, owner_id):
-    """
-    Получает статистику поста через VK API.
-    Возвращает dict с полями likes, reposts, comments, views.
-    """
     try:
         params = {
             "posts": f"{owner_id}_{post_id}",
             "access_token": VK_TOKEN,
             "v": "5.131"
         }
-        response = requests.get("https://api.vk.com/method/wall.getById", params=params, timeout=30)
+        response = requests.post("https://api.vk.com/method/wall.getById", data=params, timeout=30)
         if response.status_code == 200:
             data = response.json()
             if "response" in data and len(data["response"]) > 0:
@@ -296,7 +301,6 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 def get_best_topics(niche, limit=5):
-    """Возвращает список тем с наибольшей вовлечённостью для данной ниши."""
     history = load_stats()
     niche_posts = [h for h in history if h.get("niche") == niche]
     if not niche_posts:
@@ -314,41 +318,78 @@ def get_best_topics(niche, limit=5):
     return best
 
 def enhance_topic_with_best_topics(niche, original_topic):
-    """Улучшает тему, добавляя успешные темы как пример."""
     best = get_best_topics(niche, limit=3)
     if not best:
         return original_topic
     return f"{original_topic} (учитывая успешные форматы: {', '.join(best)})"
 
 # ============================================================
-# ===== УЛУЧШЕННЫЙ ПРОМПТ ДЛЯ КАРТИНОК (с учётом статистики) =====
+# ===== ДИНАМИЧЕСКИЙ ПРОМПТ ДЛЯ РЕКЛАМНЫХ КАРТИНОК (родительская тематика) =====
 # ============================================================
 
 def build_image_prompt(topic, niche):
+    # Определяем тип контента по ключевым словам
+    keywords_lower = topic.lower()
+    scene_type = "generic"
+    if any(word in keywords_lower for word in ["игра", "игрушка", "забава", "досуг", "творчество"]):
+        scene_type = "play"
+    elif any(word in keywords_lower for word in ["обучение", "чтение", "школа", "урок", "развитие", "образование"]):
+        scene_type = "learning"
+    elif any(word in keywords_lower for word in ["здоровье", "спорт", "физическая", "питание", "режим", "сон"]):
+        scene_type = "health"
+    elif any(word in keywords_lower for word in ["психология", "чувства", "эмоции", "конфликт", "общение", "разговор"]):
+        scene_type = "psychology"
+    elif any(word in keywords_lower for word in ["воспитание", "дисциплина", "границы", "правила", "пример"]):
+        scene_type = "upbringing"
+    elif any(word in keywords_lower for word in ["семья", "выходной", "праздник", "традиция", "совместный", "время"]):
+        scene_type = "family"
+    elif any(word in keywords_lower for word in ["дом", "уют", "интерьер", "порядок", "быт"]):
+        scene_type = "home"
+    else:
+        scene_type = "generic"
+
+    # Базовые составляющие промпта
+    scene_descriptions = {
+        "play": "Дети играют в развивающие игры, яркие игрушки, творчество, радость, смех, свобода, мягкое освещение, тёплые тона.",
+        "learning": "Ребёнок за чтением книги, школьные принадлежности, уютная комната, внимание, концентрация, вдохновляющая атмосфера, мягкий свет.",
+        "health": "Здоровый образ жизни: дети на прогулке, спорт, фрукты и овощи, режим дня, сон, улыбающиеся лица, энергичные краски.",
+        "psychology": "Тёплая беседа родителей и ребёнка, доверие, объятия, уют, спокойствие, мягкие цвета, понимание.",
+        "upbringing": "Родители и дети, совместные занятия, установка правил, пример, доверительные отношения, добрый наставник, светлые тона.",
+        "family": "Счастливая семья: родители и дети вместе, прогулка, пикник, праздник, улыбки, тепло, уют, золотистый свет.",
+        "home": "Уютный дом, порядок, семейные традиции, совместное времяпрепровождение, комфорт, спокойствие, мягкое освещение.",
+        "generic": "Счастливая семья, дети и родители, доверие, любовь, забота, уют, свет, тёплые тона."
+    }
+
+    # Списки для вариативности
+    angles = ["крупный план", "общий план", "вид сверху", "вид снизу", "панорамный обзор", "динамичный ракурс", "фронтальный вид", "в перспективе"]
+    lightings = ["солнечный свет с золотым оттенком", "сумеречный свет с синими акцентами", "драматичное контровое освещение", "мягкий рассеянный свет", "профессиональное студийное освещение", "естественный дневной свет"]
+    moods = ["кинематографичный, эпичный", "спокойный, надёжный, основательный", "современный, футуристичный", "уютный, тёплый", "индустриальный, брутальный", "чистый, минималистичный"]
+
+    angle = random.choice(angles)
+    lighting = random.choice(lightings)
+    mood = random.choice(moods)
+
+    scene_desc = scene_descriptions.get(scene_type, scene_descriptions["generic"])
     enhanced_topic = enhance_topic_with_best_topics(niche, topic)
-    base = (
+
+    prompt = (
         f"Hyperrealistic cinematic photograph, square 1:1 format, {enhanced_topic}. "
-        "No text, no typography, no words, no letters, no numbers on the image. "
-        "May include stylized icons, logos, geometric shapes, abstract patterns, "
-        "branding elements, arrows, badges, or graphic overlays for visual appeal. "
-        "Professionally styled composition, dramatic high-contrast lighting, "
-        "cinematic color grading (rich reds, deep blues, warm golden highlights), "
-        "shallow depth of field, sharp focus on the main subject, "
-        "ultra-detailed textures (skin pores, fabric weaves, reflections, materials), "
-        "8K resolution, photorealistic, editorial quality, "
-        "reminiscent of high-end advertising or fashion photography, "
-        "emotionally compelling, vibrant yet natural colors, "
-        "background softly blurred with bokeh, spotlight effect, "
-        "modern aesthetic, perfect for social media cover, "
-        "professional retouching, no plastic or artificial look, "
-        "captured with Hasselblad H6D, 100mm lens, f/2.8, "
-        "natural motion frozen, dynamic energy, "
-        "atmospheric haze, subtle lens flare, volumetric light."
+        f"{scene_desc} "
+        f"Акцент на детализацию, высокое качество, 8K, фотореализм. "
+        f"Ракурс: {angle}. Освещение: {lighting}. Настроение: {mood}. "
+        "Без людей, если это не требуется по смыслу. Без текста и надписей. "
+        "Используйте цветовую гамму, соответствующую настроению: тёплые, пастельные тона. "
+        "Композиция профессиональная, сбалансированная, привлекающая внимание. "
+        "Современный, рекламный, редакционный стиль."
     )
-    return base
+    return prompt
+
+# ============================================================
+# ===== ГЕНЕРАЦИЯ КАРТИНОК (приоритет Pollinations -> Agnes) =====
+# ============================================================
 
 def generate_image_agnes(prompt):
-    log("   🖼️ Попытка Agnes (улучшенный промпт)...")
+    log("   🖼️ Попытка Agnes...")
     if not AGNES_API_KEY:
         log("   AGNES_API_KEY не задан")
         return None
@@ -364,7 +405,7 @@ def generate_image_agnes(prompt):
             "https://apihub.agnes-ai.com/v1/images/generations",
             headers=headers,
             json=data,
-            timeout=120
+            timeout=180
         )
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
@@ -380,44 +421,8 @@ def generate_image_agnes(prompt):
         log(f"   ❌ Agnes окончательно: {e}")
         return None
 
-def generate_image_gigachat(prompt):
-    log("   🖼️ Попытка GigaChat (приоритетный)...")
-    if not GIGACHAT_API_KEY:
-        log("   GIGACHAT_API_KEY не задан")
-        return None
-    headers = {
-        "Authorization": f"Bearer {GIGACHAT_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "GigaChat-Image",
-        "prompt": prompt,
-        "size": "1024x1024",
-        "n": 1
-    }
-    def _do():
-        response = requests.post(
-            "https://gigachat.devices.sberbank.ru/api/v1/images/generations",
-            headers=headers,
-            json=data,
-            timeout=120
-        )
-        if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}")
-        json_resp = response.json()
-        if not json_resp.get("data") or len(json_resp["data"]) == 0:
-            raise Exception("Empty data")
-        return json_resp["data"][0]["url"]
-    try:
-        url = retry_call(_do, max_retries=2, delay=3, backoff=2)
-        log("   ✅ GigaChat успешно")
-        return url
-    except Exception as e:
-        log(f"   ❌ GigaChat окончательно: {e}")
-        return None
-
 def generate_image_pollinations(prompt):
-    log("   🖼️ Попытка Pollinations (улучшенный промпт)...")
+    log("   🖼️ Попытка Pollinations (бесплатный)...")
     try:
         short_prompt = prompt[:250] + " photorealistic, high quality, 1:1"
         prompt_encoded = urllib.parse.quote(short_prompt)
@@ -448,14 +453,22 @@ def download_image(url):
         log(f"   ❌ Скачивание провалилось: {e}")
         return None
 
-# ===== ПУБЛИКАЦИЯ В VK =====
+# ===== ПУБЛИКАЦИЯ В VK (с POST для длинных запросов) =====
 def vk_api_request(method, params, token, retries=3):
     base_url = "https://api.vk.com/method/"
     params = params.copy()
     params["access_token"] = token
     params["v"] = "5.131"
+
+    post_methods = ["wall.post", "wall.getById", "photos.saveWallPhoto"]
+    use_post = method in post_methods
+
     def _do():
-        response = requests.get(base_url + method, params=params, timeout=60)
+        if use_post:
+            response = requests.post(base_url + method, data=params, timeout=60)
+        else:
+            response = requests.get(base_url + method, params=params, timeout=60)
+
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
         json_resp = response.json()
@@ -463,6 +476,7 @@ def vk_api_request(method, params, token, retries=3):
             log(f"   ❌ VK API ошибка в {method}: {json_resp['error']}")
             raise Exception(json_resp["error"]["error_msg"])
         return json_resp["response"]
+
     try:
         return retry_call(_do, max_retries=retries, delay=2, backoff=2)
     except Exception as e:
@@ -589,7 +603,7 @@ def post_to_vk(image_bytes, text):
             pass
         return False, f"Исключение: {str(e)}", False, None
 
-# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА (с аналитикой) =====
+# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА =====
 def execute_scheduled_post(item):
     if item.get("niche") != "родительский":
         log(f"⏭️ Пропускаем задание для другой ниши: {item.get('niche')}")
@@ -608,9 +622,8 @@ def execute_scheduled_post(item):
     log(f"✅ Текст получен, длина {len(post_text)}")
 
     sources = [
-        ("GigaChat", generate_image_gigachat),
-        ("Agnes", generate_image_agnes),
-        ("Pollinations", generate_image_pollinations)
+        ("Pollinations", generate_image_pollinations),
+        ("Agnes", generate_image_agnes)
     ]
 
     photo_uploaded = False
@@ -658,7 +671,6 @@ def execute_scheduled_post(item):
         else:
             log(f"❌ Ошибка публикации без фото: {error}")
 
-    # ===== СБОР СТАТИСТИКИ ПОСЛЕ ПУБЛИКАЦИИ =====
     if success and post_id:
         log(f"📊 Сбор статистики для поста {post_id}...")
         time.sleep(10)
@@ -690,7 +702,7 @@ def scheduler_loop():
             traceback.print_exc(file=sys.stdout)
         time.sleep(30)
 
-# ===== ОБРАБОТЧИКИ КОМАНД (с /stats и улучшенным промптом) =====
+# ===== ОБРАБОТЧИКИ КОМАНД =====
 def process_message(message):
     chat_id = message["chat"]["id"]
     text = message.get("text", "").strip()
@@ -699,9 +711,10 @@ def process_message(message):
     if text.startswith("/start"):
         send_message(chat_id,
             "👋 Бот для автопостинга в Родительский навигатор.\n"
-            "🎨 Картинки: без текста, с рекламными иконками.\n"
-            "🔄 Приоритет: GigaChat -> Agnes -> Pollinations\n"
+            "👨‍👩‍👧‍👦 Экспертный блог о воспитании и семейной жизни.\n"
             "📊 Бот собирает статистику и учится на успешных постах.\n"
+            "🖼️ Динамические картинки под каждую тему.\n"
+            "📝 Посты с эмодзи, хештегами, структурой 70/20/10.\n"
             "/post_in тема минуты — добавить пост через N минут\n"
             "/run_now тема — опубликовать прямо сейчас\n"
             "/list — показать все задания\n"
@@ -722,7 +735,6 @@ def process_message(message):
         if not history:
             send_message(chat_id, "📭 Нет данных по постам.")
             return
-        # Группируем по нишам (у нас только родительская, но универсально)
         niche_groups = {}
         for h in history:
             niche = h.get("niche", "unknown")
@@ -756,9 +768,8 @@ def process_message(message):
                 return
 
             sources = [
-                ("GigaChat", generate_image_gigachat),
-                ("Agnes", generate_image_agnes),
-                ("Pollinations", generate_image_pollinations)
+                ("Pollinations", generate_image_pollinations),
+                ("Agnes", generate_image_agnes)
             ]
 
             photo_uploaded = False
@@ -800,7 +811,6 @@ def process_message(message):
                 else:
                     send_message(chat_id, f"❌ Ошибка публикации: {error}")
 
-            # Сбор статистики после публикации
             if success and post_id:
                 log(f"📊 Сбор статистики для поста {post_id}...")
                 time.sleep(10)
@@ -886,7 +896,7 @@ def get_updates(offset):
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Бот для Родительского навигатора (с аналитикой и самообучением) запущен")
+    log("🤖 Бот для Родительского навигатора (70/20/10, эмодзи, хештеги) запущен")
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
     while True:
