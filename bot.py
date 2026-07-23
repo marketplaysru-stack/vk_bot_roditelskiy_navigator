@@ -12,10 +12,10 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ===== ИМПОРТ НАСТРОЕК ИЗ ОТДЕЛЬНЫХ ФАЙЛОВ =====
-import image_prompts as img_cfg
+# ===== ИМПОРТ НАСТРОЕК =====
 import text_prompts as txt_cfg
-import vk_feeds
+import image_prompts as img_cfg
+import vk_feeds   # если используется, но у родительского может не быть
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -41,11 +41,11 @@ def log(msg):
     logging.info(msg)
 
 # ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
-BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")
-VK_TOKEN = os.getenv("VK_TOKEN_PARENT")
-VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")
+BOT_TOKEN = os.getenv("BOT_TOKEN_NEW")          # родительский Telegram-бот
+VK_TOKEN = os.getenv("VK_TOKEN_PARENT")         # токен родительской группы
+VK_GROUP_ID = os.getenv("VK_GROUP_ID_PARENT")   # ID родительской группы
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
-GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
+GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")  # опционально
 PORT = int(os.getenv("PORT", 8081))
 
 if not BOT_TOKEN:
@@ -63,11 +63,11 @@ except ValueError:
     log(f"❌ VK_GROUP_ID_PARENT должен быть числом, получено: {VK_GROUP_ID}")
     sys.exit(1)
 if not AGNES_API_KEY:
-    log("⚠️ AGNES_API_KEY не задан (текст и картинки через резерв)")
+    log("⚠️ AGNES_API_KEY не задан (картинки через Pollinations)")
 if not GIGACHAT_API_KEY:
     log("⚠️ GIGACHAT_API_KEY не задан (будет пропущен)")
 
-log("🚀 Запуск родительского бота (Agnes → GigaChat → Pollinations, с отдельными настройками, VK Feeds)")
+log("🚀 Запуск родительского бота (Agnes → GigaChat → Pollinations, улучшенные картинки)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -230,7 +230,7 @@ def generate_post_text(topic):
         return txt_cfg.get_fallback_text(topic)
 
 # ============================================================
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ (использует image_prompts.py) =====
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ (приоритет: Agnes → GigaChat → Pollinations) =====
 # ============================================================
 
 def build_image_prompt(topic):
@@ -341,6 +341,7 @@ def generate_image(topic):
     prompt = build_image_prompt(topic)
     log(f"   Промпт: {prompt[:200]}...")
 
+    # Приоритет: Agnes → GigaChat → Pollinations
     for attempt in range(2):
         log(f"   Попытка {attempt+1}/2")
         url = generate_image_agnes(prompt)
@@ -586,35 +587,6 @@ def scheduler_loop():
             traceback.print_exc(file=sys.stdout)
         time.sleep(30)
 
-# ===== VK FEEDS ФОНОВЫЙ ПОТОК (с передачей schedule) =====
-def vk_feeds_scheduler_loop():
-    """Фоновый поток для проверки групп ВК и добавления постов в расписание."""
-    while True:
-        try:
-            schedule = load_schedule()
-            new_posts = vk_feeds.fetch_and_generate_topics_from_vk(schedule, limit=3)
-            for post_data in new_posts:
-                niche = post_data['niche']
-                topic = post_data['topic']
-                minutes = 5
-                publish_time = datetime.now() + timedelta(minutes=minutes)
-                full_time = publish_time.strftime("%Y-%m-%d %H:%M")
-                schedule = load_schedule()
-                new_id = str(int(time.time()))
-                schedule.append({
-                    "id": new_id,
-                    "niche": niche,
-                    "topic": topic,
-                    "time": full_time,
-                    "done": False,
-                    "source_type": "vk_feed"   # помечаем, что пост из VK Feeds
-                })
-                save_schedule(schedule)
-                log(f"📰 Добавлен пост из ВК в нишу '{niche}': {topic[:50]}...")
-        except Exception as e:
-            log(f"⚠️ Ошибка в VK Feeds планировщике: {e}")
-        time.sleep(2 * 60 * 60)  # 2 часа
-
 # ===== ОБРАБОТЧИКИ КОМАНД =====
 def process_message(message):
     chat_id = message["chat"]["id"]
@@ -732,7 +704,7 @@ def add_test_post_if_empty():
         schedule.append({
             "id": f"test_parent_{int(time.time())}",
             "niche": "родительский",
-            "topic": "Тестовый пост для родительского бота (гиперреалистичные лица)",
+            "topic": "Тестовый пост для родительского бота (улучшенные картинки)",
             "time": test_time,
             "done": False
         })
@@ -741,15 +713,9 @@ def add_test_post_if_empty():
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Родительский бот (с отдельными настройками и VK Feeds) запущен")
+    log("🤖 Родительский бот (улучшенные картинки) запущен")
     add_test_post_if_empty()
-
-    # Запускаем основной планировщик
     threading.Thread(target=scheduler_loop, daemon=True).start()
-
-    # Запускаем поток для VK Feeds
-    threading.Thread(target=vk_feeds_scheduler_loop, daemon=True).start()
-
     update_id = 0
     while True:
         updates = get_updates(update_id + 1)
