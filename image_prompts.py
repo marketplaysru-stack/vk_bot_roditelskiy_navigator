@@ -1,75 +1,93 @@
-# ===== image_prompts.py для родительского бота (супер-реализм) =====
+# ===== image_prompts.py для родительского бота (улучшенный) =====
 import random
 
-# Стили с требованием фотореализма, детализации и естественности
-STYLES = [
-    "фотореалистичная семейная фотография, профессиональная съёмка, 8K",
-    "кинематографичный кадр семьи в естественной среде, золотой час",
-    "портретная съёмка с мягким освещением, глубокая резкость",
-    "жанровая сцена с детьми, естественные эмоции, живая атмосфера",
-    "макро-детали: руки, глаза, текстура кожи, волосы",
-    "интерьерная съёмка с семьёй, студийный свет",
-    "уличная фотография семьи, естественное освещение, мягкие тени",
+# ===== БАЗОВЫЙ ПРОМПТ =====
+BASE_PROMPT = (
+    "Hyperrealistic cinematic photograph, square 1:1 format, ultra-detailed, 8K, macro and micro details. "
+    "Scene: family moment related to '{topic}'. "
+    "People: typical Moscow residents, European appearance, fair skin, light brown or blonde hair. "
+    "Faces hyperrealistic: visible pores, fine wrinkles, individual eyelashes, expressive eyes with natural reflections, subtle skin texture. "
+    "Hands and fingers: anatomically correct, natural proportions, realistic skin folds and knuckles, no extra fingers, no distortions. "
+    "Clothing: modern, casual, with natural fabric textures (wool, cotton, denim) and visible seams, folds, creases. "
+    "Environment: Moscow setting with authentic details. "
+    "Lighting: soft natural light, golden hour or overcast, with dramatic shadows and highlights enhancing depth. "
+    "Include subtle graphic elements: stylized icons, geometric shapes, abstract patterns, arrows, badges, or minimalist logos integrated harmoniously into the composition (as watermarks, overlays, or foreground/background elements) – but NO TEXT, NO TYPOGRAPHY, NO LETTERS, NO NUMBERS. "
+    "Add extreme macro details: dew drops on leaves, individual dust particles in light beams, fine hair strands, fabric threads, skin micro-texture, reflections in eyes, lens flares, bokeh effects. "
+    "Professional photography style: Hasselblad H6D, 100mm macro lens, f/2.8, shallow depth of field, focus on the main subject, natural film grain, no CGI, no plastic look."
+)
+
+# ===== ВАРИАНТЫ ДЛЯ РАЗНООБРАЗИЯ =====
+ANGLES = [
+    "extreme close-up on faces",
+    "medium close-up with hands visible",
+    "wide shot with family",
+    "over-the-shoulder view",
+    "low angle looking up",
+    "eye-level perspective",
+    "profile view",
+    "three-quarter view"
 ]
 
-def get_context_from_topic(topic):
-    keywords = []
-    if "ребён" in topic or "дет" in topic:
-        keywords.append("дети, игры, радость, эмоции")
-    if "родител" in topic:
-        keywords.append("родители, забота, любовь, семья")
-    if "дом" in topic or "квартир" in topic:
-        keywords.append("домашний уют, интерьер, семья дома")
-    if "прогулк" in topic:
-        keywords.append("прогулка, природа, парк, активность")
-    if "психолог" in topic:
-        keywords.append("доверие, объятия, спокойствие, понимание")
-    if "школ" in topic or "учёб" in topic:
-        keywords.append("учеба, развитие, дети за книгами")
-    if not keywords:
-        keywords.append("счастливая семья, тёплые отношения")
-    return ", ".join(keywords)
+LIGHTING_STYLES = [
+    "warm golden hour sunlight streaming through windows, creating long shadows and highlights",
+    "soft overcast daylight with gentle shadows and diffused light",
+    "dramatic cinematic lighting with high contrast and rim lights",
+    "natural window light, soft and diffused, with window reflections",
+    "sunset glow with warm orange and pink hues",
+    "indoor warm lamp light combined with cool daylight from window"
+]
 
+MOODS = [
+    "joyful, genuine laughter, happy family moment",
+    "tender, loving, warm embrace between parent and child",
+    "surprised, amazed, delighted expression",
+    "calm, peaceful, relaxed family time",
+    "playful, fun, energetic interaction",
+    "focused, attentive, engaged in activity"
+]
+
+BACKGROUNDS = [
+    "Moscow courtyard with birch trees and children's playground, soft bokeh",
+    "bright modern apartment with panoramic windows and city view",
+    "green park with benches and walking paths, sun-dappled",
+    "cozy kitchen with family having breakfast, rustic details",
+    "bookstore or library corner, warm lighting",
+    "snowy Moscow street with festive lights, winter atmosphere"
+]
+
+# ===== ФУНКЦИЯ ГЕНЕРАЦИИ ПРОМПТА =====
 def build_image_prompt(topic):
-    style = random.choice(STYLES)
-    context = get_context_from_topic(topic)
+    angle = random.choice(ANGLES)
+    lighting = random.choice(LIGHTING_STYLES)
+    mood = random.choice(MOODS)
+    background = random.choice(BACKGROUNDS)
 
-    base = (
-        f"Создай фотореалистичное изображение для поста на тему: '{topic}'. "
-        f"Стиль: {style}. "
-        f"Контекст: {context}. "
-        "Изображение должно быть максимально детализированным, с естественной цветопередачей, "
-        "натуральными текстурами кожи, волос, одежды, с мягким естественным освещением. "
-        "Лица должны быть реалистичными, с естественными пропорциями, без искажений, без мультяшности. "
-        "Дети и взрослые должны выглядеть как живые люди, с естественными эмоциями, настоящими улыбками и взглядами. "
-        "Фон должен быть естественным или слегка размытым (bokeh), чтобы подчеркнуть главных героев. "
-        "Цвета натуральные, тёплые, без перенасыщенности. "
-        "Формат: квадратный (1:1). "
-        "Разрешение: 8K, сверхвысокое качество. "
-        "Без текста и надписей. "
-        "Фотореализм, не мультяшный стиль, не иллюстрация, а реальная фотография, сделанная на профессиональную камеру."
+    # Дополнительный текст для борьбы с одинаковыми лицами и мультяшностью
+    extra = (
+        " IMPORTANT: The image must contain diverse individuals – different ages, genders, and appearances. "
+        "Avoid identical faces or clones. Each person should look unique and realistic. "
+        "Faces should be natural, not exaggerated. No cartoonish or stylized art style. Photorealism only. "
+        "No plastic skin, no airbrushing. Include subtle imperfections: freckles, moles, uneven skin tone. "
+        "Clothing should have realistic folds and texture."
     )
 
-    details = [
-        "с акцентом на эмоции и взаимодействие",
-        "с мягким рассеянным светом",
-        "с крупным планом для передачи деталей",
-        "с естественными тенями",
-        "с тёплым золотистым оттенком",
-        "с глубиной резкости",
-        "с естественным движением (схваченный момент)",
-    ]
-    base += " " + random.choice(details)
+    prompt = BASE_PROMPT.format(topic=topic) + (
+        f" Camera angle: {angle}. "
+        f"Lighting: {lighting}. "
+        f"Mood: {mood}. "
+        f"Background: {background}. "
+        "Include graphic overlays: subtle icons, arrows, or abstract shapes to enhance visual appeal, but strictly NO TEXT. "
+        "Ensure perfect anatomy: realistic hands, natural finger positions, no extra limbs, correct proportions. "
+        "Add micro-details: dew drops, dust particles, individual hair strands, skin pores, fabric textures, eye reflections. "
+        "Ensure diversity: no two people look alike. "
+        "PHOTOREALISTIC, NOT CARTOON. "
+        "Make faces realistic with subtle imperfections. "
+        "No plastic skin, no airbrushing. "
+        "Clothing should have realistic folds and texture. "
+    ) + extra
+    return prompt
 
-    if random.random() < 0.3:
-        base += " Действие происходит в уютной домашней обстановке или на природе."
-
-    # Явный запрет на мультяшность
-    base += " Запрещены мультяшные стили, векторная графика, плоские иллюстрации, карикатуры. Только фотореализм."
-
-    return base
-
-# Технические параметры (размер 1536x1536)
+# ===== ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ =====
 AGNES_IMAGE_PARAMS = {
     "model": "agnes-image-2.1-flash",
     "size": "1536x1536",
@@ -98,4 +116,4 @@ DOWNLOAD_BACKOFF = 2
 
 SUFFIX_AGNES = ""
 SUFFIX_GIGACHAT = ""
-SUFFIX_POLLINATIONS = " фотореализм, 8K, сверхдетализированное, семейная тематика, естественное освещение, профессиональная фотография"
+SUFFIX_POLLINATIONS = " hyperrealistic, extreme detail, no text, diverse faces, photorealistic"
